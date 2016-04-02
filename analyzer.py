@@ -23,8 +23,29 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from collections import OrderedDict
+from scipy import constants
 
-
+class comp:
+    def cutting_list(self,limit,data):
+        length=len(data)
+        remove=[]
+        for i in range(length):
+            if data[i]>limit:
+                remove.append(i)
+        return remove
+    def finding_in_list(self,data,what):
+        length=len(data)
+        remove=[]
+        for i in range(length):
+            if data[i]==what:
+                remove.append(i)
+        return remove
+    def delete_list(self,input_list,remove_list):
+        return [input_list[i] for i in range(len(input_list)) if i not in remove_list]
+    def delete_dict_list(self, input_dict,remove_list):
+        return {key:self.delete_list(input_dict[key],remove_list) for key in input_dict.keys()}
+    def doppler_velocity(self,measured,database):
+        return 1000*constants.c*(database-measured)/database
 class App:
     size=25
     '''
@@ -33,11 +54,11 @@ class App:
     def __init__(self,master):
         ### Dictionary containing data on all frames in the main window
         self.saving_var={'Files':[StringVar(),
-                             OrderedDict([ ('Spectral lines',StringVar()), ('Spectrum',StringVar()), ('Removed',StringVar()), ('Cut',StringVar())])],
+                             OrderedDict([ ('Spectral lines',StringVar()), ('Spectrum',StringVar()), ('Removed',StringVar()), ('Special Eu',StringVar())])],
                     'Source':[StringVar(),
                               OrderedDict([('Source name',StringVar()), ('LSR',StringVar()), ('Min Frequency',StringVar()), ('Max Frequency',StringVar()), ( 'Column density of H2',StringVar()), ('Column density error',StringVar()) ])],
                     'Statistics':[StringVar(),
-                                  OrderedDict([('Pearson limit',StringVar()),('Cut Temperature',StringVar()),(' Max Temperature',StringVar()),('Error cut',StringVar())])]}
+                                  OrderedDict([('Pearson limit',StringVar()),('Max Eu',StringVar()),('Error cut',StringVar())])]}
         
         #### Menu
         self.menubar=Menu(master)
@@ -131,8 +152,18 @@ class App:
             tf=tkFileDialog.askopenfilename(parent=par,title='Choose a file')
             saving_var[k][0].set(tf)
             
+    def check_cut_files(self,text,else_set):
+        try:
+                f=float(text)
+        except ValueError:
+                f=else_set
+        return f
+            
     def analyze_input(self):
         # Reading the spectral lines input file
+        self.ErrorCut=self.check_cut_files(self.saving_var['Statistics'][1]['Error cut'].get(),100.)
+        self.MaxEu=self.check_cut_files(self.saving_var['Statistics'][1]['Max Eu'].get(),1000.)
+        self.special_Eu={}
         self.progress["maximum"]=400
         self.progress["value"] = 0
         file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()
@@ -148,7 +179,8 @@ class App:
             line=line.strip()
             line=line.split(':')
             for j in self.input_dict.keys():
-                line[j]=float(line[j])
+                if j!=2:                
+                    line[j]=float(line[j])
             xaux.append(line)
         self.progress["value"]+=100
         self.molecules=list(set([y[16] for y in xaux]))
@@ -173,6 +205,29 @@ class App:
                 aux1[spec]=aux
             self.x[mol]=aux1
         self.progress["value"] +=100
+        for mol in self.molecules:
+            for spec in self.species:
+                self.x[mol][spec]['Relative error A']=self.x[mol][spec]['Area']/self.x[mol][spec]['AreaE']
+                self.x[mol][spec]['Relative error W']=self.x[mol][spec]['Wid']/self.x[mol][spec]['WidE']
+                self.x[mol][spec]['Doppler V']=comp.doppler_velocity(self.x[mol][spec]['LamPos'],self.x[mol][spec]['LamTrans'])
+                if mol not in self.special_Eu.keys():
+                    remove=comp.cutting_list(self.MaxEu,self.x[mol][spec]['Eu'])
+                else:
+                    remove=comp.cutting_list(self.special_Eu[mol],self.x[mol][spec]['Eu'])
+                remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error A'])
+                remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error W'])
+                self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
+        remove=[]
+        nu_list={}
+        for mol in self.molecules:
+            nu_list[mol]=list(set([self.x[mol][spec]['LamPos'] for spec in self.species]))
+        for mol in self.molecules:
+            for mol1 in self.molecules:
+                for nu_cand in nu_list[mol]:
+                    if (nu_cand in nu_list[mol1]) and mol1!=mol:
+                        remove.append(nu_cand)
+        remove=list(set(remove))
+        
         self.progress.after(800, self.terminate_progress)
         
     def terminate_progress(self):
