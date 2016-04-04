@@ -13,19 +13,21 @@ import ttk
 import tkMessageBox
 import tkFileDialog
 import os
-import shutil
+#from shutil import rmtree
 from uncertainties import ufloat
 from math import *
 from operator import itemgetter, attrgetter, methodcaller
 from scipy.optimize import leastsq
 import numpy as np
-from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from collections import OrderedDict
 from scipy import constants
+from json import dump as jdump
+from json import load as jload
 
 class comp:
+    @classmethod
     def cutting_list(self,limit,data):
         length=len(data)
         remove=[]
@@ -33,6 +35,7 @@ class comp:
             if data[i]>limit:
                 remove.append(i)
         return remove
+    @classmethod
     def finding_in_list(self,data,what):
         length=len(data)
         remove=[]
@@ -40,12 +43,16 @@ class comp:
             if data[i]==what:
                 remove.append(i)
         return remove
+    @classmethod
     def delete_list(self,input_list,remove_list):
         return [input_list[i] for i in range(len(input_list)) if i not in remove_list]
+    @classmethod
     def delete_dict_list(self, input_dict,remove_list):
         return {key:self.delete_list(input_dict[key],remove_list) for key in input_dict.keys()}
+    @classmethod
     def doppler_velocity(self,measured,database):
-        return 1000*constants.c*(database-measured)/database
+        return [1000*constants.c*(database[i]-measured[i])/database[i] for i in range(len(measured))]
+
 class App:
     size=25
     '''
@@ -63,11 +70,13 @@ class App:
         #### Menu
         self.menubar=Menu(master)
         self.file_menu=Menu(self.menubar,tearoff=0)
+        self.analysis_menu=Menu(self.menubar,tearoff=0)
         self.file_menu.add_command(label="Hello!",command=self.open_file)
         self.file_menu.add_command(label="Save properties", command=lambda:self.save_window(self.saving_var))
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
-        self.file_menu.add_command(label="Rotational diagrams", command=self.analyze_input)
+        self.analysis_menu.add_command(label="Save to JSON", command=self.save_to_json)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
+        self.menubar.add_cascade(label="Analysis", menu=self.analysis_menu)
         master.config(menu=self.menubar)
         
         #### frames
@@ -159,7 +168,7 @@ class App:
                 f=else_set
         return f
             
-    def analyze_input(self):
+    def save_to_json(self):
         # Reading the spectral lines input file
         self.ErrorCut=self.check_cut_files(self.saving_var['Statistics'][1]['Error cut'].get(),100.)
         self.MaxEu=self.check_cut_files(self.saving_var['Statistics'][1]['Max Eu'].get(),1000.)
@@ -173,8 +182,9 @@ class App:
         self.input_name=self.saving_var['Files'][1]['Spectral lines'].get()
         self.input_file=open(self.input_name,'r')
         self.input_dict={0:'Area',1:'AreaE',2:'LamPos',3:'LamPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'LamTrans',9:'LamTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
+        self.reverse_dict={values:keys for keys,values in self.input_dict.items()}        
         xaux=[]
-        k=0
+
         for line in self.input_file:
             line=line.strip()
             line=line.split(':')
@@ -201,15 +211,20 @@ class App:
             for spec in self.species[mol]:
                 aux={}
                 for key,vals in self.input_dict.items():
-                    aux[vals]=[y[key] for y in xaux]
+                    aux[vals]=[y[key] for y in xaux if y[19]==spec]
                 aux1[spec]=aux
             self.x[mol]=aux1
+
+	xx=[]
+	xy=[]
+	
+	
         self.progress["value"] +=100
         for mol in self.molecules:
-            for spec in self.species:
-                self.x[mol][spec]['Relative error A']=self.x[mol][spec]['Area']/self.x[mol][spec]['AreaE']
-                self.x[mol][spec]['Relative error W']=self.x[mol][spec]['Wid']/self.x[mol][spec]['WidE']
-                self.x[mol][spec]['Doppler V']=comp.doppler_velocity(self.x[mol][spec]['LamPos'],self.x[mol][spec]['LamTrans'])
+            for spec in self.species[mol]:
+                self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['Area'][i]/self.x[mol][spec]['AreaE'][i] for i in range(len(self.x[mol][spec]['Area']))]
+                self.x[mol][spec]['Relative error W']=[self.x[mol][spec]['Wid'][i]/self.x[mol][spec]['WidE'][i] for i in range(len(self.x[mol][spec]['Wid']))]
+                #self.x[mol][spec]['Doppler V']=comp(App).doppler_velocity(self.x[mol][spec]['LamPos'],self.x[mol][spec]['LamTrans'])
                 if mol not in self.special_Eu.keys():
                     remove=comp.cutting_list(self.MaxEu,self.x[mol][spec]['Eu'])
                 else:
@@ -217,19 +232,30 @@ class App:
                 remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error A'])
                 remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error W'])
                 self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
+	
+        for mol in self.molecules:
+            for i in range(len(self.species[mol])):
+                if self.species[mol][i] not in self.x[mol].keys():
+                    del self.species[mol][i]
         remove=[]
         nu_list={}
         for mol in self.molecules:
-            nu_list[mol]=list(set([self.x[mol][spec]['LamPos'] for spec in self.species]))
+            for spec in self.species[mol]:
+                nu_list[mol]=list(set([y  for spec in self.species[mol] for y in self.x[mol][spec]['LamPos'] ]))
+
         for mol in self.molecules:
             for mol1 in self.molecules:
                 for nu_cand in nu_list[mol]:
                     if (nu_cand in nu_list[mol1]) and mol1!=mol:
                         remove.append(nu_cand)
         remove=list(set(remove))
+                    
+        with open('data.json', 'w') as outfile:
+		jdump(self.x, outfile, encoding='utf-8')
         
+	
         self.progress.after(800, self.terminate_progress)
-        
+	
     def terminate_progress(self):
         # resetting progressbar to 0
         self.progress["value"]=0
@@ -243,4 +269,11 @@ master.mainloop()
         plt.figure()
         plt.plot([self.x['CH3OCHOv=0'][s]['Eu'] for s in self.species['CH3OCHOv=0']],[self.x['CH3OCHOv=0'][s]['Tpeak'] for s in self.species['CH3OCHOv=0']],'k.')
         plt.savefig('proba.png')
+
+for mol in self.molecules:
+		for s in self.species[mol]:
+			xx+=self.x[mol][s]['Eu'] 
+			xy+=self.x[mol][s]['Tpeak']
+	plt.plot(xx,xy,'k.')
+	plt.show()
 '''
