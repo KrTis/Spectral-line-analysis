@@ -52,16 +52,71 @@ class comp:
     @classmethod
     def doppler_velocity(self,measured,database):
         return [1000*constants.c*(database[i]-measured[i])/database[i] for i in range(len(measured))]
-
+    @classmethod
+    def save_to_json(self, saving_var, progress):
+        # Reading the spectral lines input file
+        progress["value"]=0
+        progress["maximum"]=500
+        file_candidate=saving_var['Files'][1]['Spectral lines'].get()
+        if len(file_candidate)<1:
+            tkMessageBox.showerror(message="No Spectral line file chosen!")
+            return
+        input_name=saving_var['Files'][1]['Spectral lines'].get()
+        input_file=open(input_name,'r')
+        progress["value"] +=100
+        
+        xaux=[]
+        for line in input_file:
+            line=line.strip()
+            line=line.split(':')
+            for j in App.input_dict.keys():
+                if j!=2:                
+                    line[j]=float(line[j])
+            xaux.append(line)
+        progress["value"] +=100
+        
+        molecules=list(set([y[16] for y in xaux]))
+        cnames=list(set([y[15] for y in xaux]))
+        species={}
+        for mol in molecules:
+            z=list(set([y[19] for y in xaux if y[16]==mol]))
+            species[mol]=z
+        cnames_dict={}
+        progress["value"] +=100
+        
+        for mol in cnames:
+            z=list(set([y[16] for y in xaux if y[15]==mol]))
+            cnames_dict[mol]=z
+        progress["value"]+=100
+        
+        x={}
+        for mol in molecules:
+            aux1={}
+            for spec in species[mol]:
+                aux={}
+                for key,vals in App.input_dict.items():
+                    aux[vals]=[y[key] for y in xaux if y[19]==spec]
+                aux1[spec]=aux
+            x[mol]=aux1
+        fc=file_candidate.split('.')
+        fc=fc[0]+'.json'
+        with open(fc, 'w') as outfile:
+		jdump(x, outfile, encoding='utf-8')
+        saving_var['Files'][1]['Spectral lines'].set(fc)
+        progress["value"] +=100
+        
+        return x, molecules, species, cnames_dict
 class App:
     size=25
+    input_dict={0:'Area',1:'AreaE',2:'LamPos',3:'LamPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'LamTrans',9:'LamTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
+
     '''
     The main program
     '''
     def __init__(self,master):
         ### Dictionary containing data on all frames in the main window
         self.saving_var={'Files':[StringVar(),
-                             OrderedDict([ ('Spectral lines',StringVar()), ('Spectrum',StringVar()), ('Removed',StringVar()), ('Special Eu',StringVar())])],
+                             OrderedDict([ ('Spectral lines',StringVar()),('Cleaned Spectral lines',StringVar()), ('Spectrum',StringVar()), ('Removed',StringVar()), ('Special Eu',StringVar())])],
                     'Source':[StringVar(),
                               OrderedDict([('Source name',StringVar()), ('LSR',StringVar()), ('Min Frequency',StringVar()), ('Max Frequency',StringVar()), ( 'Column density of H2',StringVar()), ('Column density error',StringVar()) ])],
                     'Statistics':[StringVar(),
@@ -74,7 +129,8 @@ class App:
         self.file_menu.add_command(label="Hello!",command=self.open_file)
         self.file_menu.add_command(label="Save properties", command=lambda:self.save_window(self.saving_var))
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
-        self.analysis_menu.add_command(label="Save to JSON", command=self.save_to_json)
+        self.analysis_menu.add_command(label="Save to JSON", command=lambda:comp.save_to_json(self.saving_var,self.progress))
+        self.analysis_menu.add_command(label="Apply criteria", command=self.clean)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
         self.menubar.add_cascade(label="Analysis", menu=self.analysis_menu)
         master.config(menu=self.menubar)
@@ -168,57 +224,32 @@ class App:
                 f=else_set
         return f
             
-    def save_to_json(self):
-        # Reading the spectral lines input file
+    
+
+	
+    def clean(self):
+        ### cleans spectra by criteria from the Statistics column
+        self.progress["value"]=0
+        self.progress["maximum"]=1000
+        
         self.ErrorCut=self.check_cut_files(self.saving_var['Statistics'][1]['Error cut'].get(),100.)
         self.MaxEu=self.check_cut_files(self.saving_var['Statistics'][1]['Max Eu'].get(),1000.)
         self.special_Eu={}
-        self.progress["maximum"]=400
-        self.progress["value"] = 0
         file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()
+        self.progress["value"] +=100
+        
         if len(file_candidate)<1:
             tkMessageBox.showerror(message="No Spectral line file chosen!")
             return
-        self.input_name=self.saving_var['Files'][1]['Spectral lines'].get()
-        self.input_file=open(self.input_name,'r')
-        self.input_dict={0:'Area',1:'AreaE',2:'LamPos',3:'LamPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'LamTrans',9:'LamTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
-        self.reverse_dict={values:keys for keys,values in self.input_dict.items()}        
-        xaux=[]
-
-        for line in self.input_file:
-            line=line.strip()
-            line=line.split(':')
-            for j in self.input_dict.keys():
-                if j!=2:                
-                    line[j]=float(line[j])
-            xaux.append(line)
-        self.progress["value"]+=100
-        self.molecules=list(set([y[16] for y in xaux]))
-        self.cnames=list(set([y[15] for y in xaux]))
-        self.species={}
-        for mol in self.molecules:
-            z=list(set([y[19] for y in xaux if y[16]==mol]))
-            self.species[mol]=z
-        self.cnames_dict={}
+        if ".json" not in file_candidate:
+            self.x,self.molecules,self.species,self.cnames_dict=comp.save_to_json(self.saving_var,self.progress)
+        else:
+            with open(file_candidate, 'r') as outfile:
+		self.x=jload( outfile, encoding='utf-8')
         self.progress["value"] +=100
-        for mol in self.cnames:
-            z=list(set([y[16] for y in xaux if y[15]==mol]))
-            self.cnames_dict[mol]=z
-        self.x={}
-        self.progress["value"]+=100
-        for mol in self.molecules:
-            aux1={}
-            for spec in self.species[mol]:
-                aux={}
-                for key,vals in self.input_dict.items():
-                    aux[vals]=[y[key] for y in xaux if y[19]==spec]
-                aux1[spec]=aux
-            self.x[mol]=aux1
-
-	xx=[]
-	xy=[]
-	
-	
+        
+        self.molecules=self.x.keys()
+        self.species={mol:self.x[mol].keys() for mol in self.molecules}
         self.progress["value"] +=100
         for mol in self.molecules:
             for spec in self.species[mol]:
@@ -232,33 +263,39 @@ class App:
                 remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error A'])
                 remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error W'])
                 self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
-	
+        self.progress["value"] +=100
+        
         for mol in self.molecules:
             for i in range(len(self.species[mol])):
                 if self.species[mol][i] not in self.x[mol].keys():
                     del self.species[mol][i]
         remove=[]
+        self.progress["value"] +=100
+        
         nu_list={}
         for mol in self.molecules:
             for spec in self.species[mol]:
                 nu_list[mol]=list(set([y  for spec in self.species[mol] for y in self.x[mol][spec]['LamPos'] ]))
-
+        
         for mol in self.molecules:
             for mol1 in self.molecules:
                 for nu_cand in nu_list[mol]:
                     if (nu_cand in nu_list[mol1]) and mol1!=mol:
                         remove.append(nu_cand)
         remove=list(set(remove))
-                    
-        with open('data.json', 'w') as outfile:
-		jdump(self.x, outfile, encoding='utf-8')
-        
+        self.progress["value"] +=100
+        for mol in self.molecules:
+            for spec in self.species[mol]:
+                self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
+        self.progress["value"] +=100
+        cleaned_file_candidate=file_candidate.split('.')
+        cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
+        with open(cleaned_file_candidate, 'w') as outfile:
+		jdump( self.x, outfile, encoding='utf-8')
+        self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
+
 	
-        self.progress.after(800, self.terminate_progress)
-	
-    def terminate_progress(self):
-        # resetting progressbar to 0
-        self.progress["value"]=0
+
 master = Tk()
 App(master)
 
