@@ -20,11 +20,28 @@ from operator import itemgetter, attrgetter, methodcaller
 from scipy.optimize import leastsq
 import numpy as np
 import matplotlib.cm as cm
-import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure, plot,show, xlabel,ylabel
 from collections import OrderedDict
 from scipy import constants
 from json import dump as jdump
 from json import load as jload
+class plotting:
+    @classmethod
+    def simple_plot(self,mol,species,xx,A,B,kwargs):
+        if mol!='All':
+            x,y=comp.combine_species(mol, species[mol],xx,A,B)
+        else:
+            x=[]
+            y=[]
+            for m in species.keys():
+                x1,y1=comp.combine_species(m, species[m],xx,A,B)
+                x+=x1
+                y+=y1
+        figure()
+        plot(x,y,kwargs)
+        xlabel(App.tex_output_dict[A])
+        ylabel(App.tex_output_dict[B])
+        show()
 
 class comp:
     @classmethod
@@ -50,8 +67,9 @@ class comp:
     def delete_dict_list(self, input_dict,remove_list):
         return {key:self.delete_list(input_dict[key],remove_list) for key in input_dict.keys()}
     @classmethod
-    def doppler_velocity(self,measured,database):
-        return [1000*constants.c*(database[i]-measured[i])/database[i] for i in range(len(measured))]
+    def doppler_velocity(self,measured,errmeas,database,errdb):
+        return [[1000*constants.c*(database[i]-float(measured[i]))/database[i] for i in range(len(measured))],
+                 [sqrt((errdb[i]/database[i])**2+(errmeas[i]/float(measured[i]))**2)*1000*constants.c*(database[i]-float(measured[i]))/database[i] for i in range(len(measured))]]
     @classmethod
     def save_to_json(self, saving_var, progress):
         # Reading the spectral lines input file
@@ -69,47 +87,148 @@ class comp:
         for line in input_file:
             line=line.strip()
             line=line.split(':')
+            print line
             for j in App.input_dict.keys():
                 if j!=2:                
                     line[j]=float(line[j])
             xaux.append(line)
+        
         progress["value"] +=100
         
         molecules=list(set([y[16] for y in xaux]))
         cnames=list(set([y[15] for y in xaux]))
         species={}
         for mol in molecules:
-            z=list(set([y[19] for y in xaux if y[16]==mol]))
-            species[mol]=z
+            species[mol]=list(set([y[19] for y in xaux if y[16]==mol]))   
         cnames_dict={}
         progress["value"] +=100
         
         for mol in cnames:
-            z=list(set([y[16] for y in xaux if y[15]==mol]))
-            cnames_dict[mol]=z
+            cnames_dict[mol]=list(set([y[16] for y in xaux if y[15]==mol]))
         progress["value"]+=100
-        
         x={}
+        
         for mol in molecules:
             aux1={}
             for spec in species[mol]:
                 aux={}
                 for key,vals in App.input_dict.items():
-                    aux[vals]=[y[key] for y in xaux if y[19]==spec]
+                    aux[vals]=[y[key]  for y in xaux if (y[16]==mol and y[19]==spec) ]
                 aux1[spec]=aux
+                
             x[mol]=aux1
+        for mol in molecules:
+            for spec in species[mol]:
+                x[mol][spec]['NuPos']=[float(y) for y in x[mol][spec]['NuPosS']]
         fc=file_candidate.split('.')
         fc=fc[0]+'.json'
         with open(fc, 'w') as outfile:
 		jdump(x, outfile, encoding='utf-8')
         saving_var['Files'][1]['Spectral lines'].set(fc)
         progress["value"] +=100
-        
         return x, molecules, species, cnames_dict
+    @classmethod
+    def evodd(self,n):
+	if(n%2==0):
+		return 'e'
+	else:
+		return 'o'
+    
+    @classmethod
+    def W(self,lin,i,mol,spec):
+        if(lin['gu'][i]<1.):
+            yy=log(lin['Area'][i]*lin['NuPos'][i])-lin['Aij'][i]*log(10.)+6.36762145-log(0.75)  
+            y,upstate=comp.gcorr(mol,spec,yy)		
+        else:
+		yy=log(lin['Area'][i]*lin['NuPos'][i]/lin['gu'][i])-lin['Aij'][i]*log(10.)+6.36762145-log(0.75) 
+        ye=np.sqrt((lin['AreaE'][i]/lin['Area'][i])**2+(2*lin['NuPosE'][i]/lin['NuPos'][i])**2)
+        return yy,ye
+    @classmethod
+    def Nu_gu(self,lin,mol,spec):
+        y=[]
+        ye=[]
+        for i in range(len(lin['Area'])):
+            y1,ye1=comp.W(lin,i,mol,spec)
+            y.append(y1)
+            ye.append(ye1)
+        return y,ye
+    @classmethod
+    def gcorr(self,chemn,qns,yy):
+	upstate=1
+    	if(chemn.strip()=='CH3OCH3'or chemn.strip()=='(CH3)2COv=0'):
+		qns1=qns.replace('(-','(*').replace(',-',',*').replace('+-','+*').replace('-+','*+').replace('--','**')
+		qns2=qns1.replace('(',',').replace(')',',').replace('-','').replace(',v=','').replace(',F=','').split(',')
+		qns3=[m.replace('*','-') for m in qns2]
+		if(len(qns3)>6):	
+			nu=int(qns3[0])
+			kau=int(qns3[1])
+			kcu=int(qns3[2])
+			nd=int(qns3[3])
+			kad=int(qns3[4])
+			kcd=int(qns3[5])
+			extra1=qns3[6]
+			if((comp.evodd(kau)=='e' and comp.evodd(kcu)=='e')or(comp.evodd(kau)=='o' and comp.evodd(kcu)=='o')):
+				if(extra1=='AA'):
+					korekcijaK=6
+				if(extra1=='AE'):
+					korekcijaK=2
+				if(extra1=='EA'):
+					korekcijaK=4
+				if(extra1=='EE'):
+					korekcijaK=16
+				
+			if((comp.evodd(kau)=='e' and comp.evodd(kcu)=='o')or(comp.evodd(kau)=='o' and comp.evodd(kcu)=='e')):
+				if(extra1=='AA'):
+					korekcijaK=10
+				if(extra1=='AE'):
+					korekcijaK=6
+				if(extra1=='EA'):
+					korekcijaK=4
+				if(extra1=='EE'):
+					korekcijaK=16
+			upstate=korekcijaK*(2*nu+1)*.5
+    	if(chemn.strip() in ['13CH3OHvt=0','CH3OHvt=0','CH3OCHOv=0','CH3OCHOv=1']):
+		qns1=qns.replace('(-','(*').replace(',-',',*').replace('+-','+*').replace('-+','*+').replace('--','**')
+		qns2=qns1.replace('(',',').replace(')',',').replace('-','').replace(',v=','').replace(',F=','').split(',')
+		qns3=[m.replace('*','-') for m in qns2]
+		Ju=int(qns3[0])
+		upstate=(2*Ju+1)
+	if(chemn.strip() in ['CH3CNv=0','CH3CCHv=0']):
+		qns1=qns.replace('(-','(*').replace(',-',',*').replace('+-','+*').replace('-+','*+').replace('--','**')
+		qns2=qns1.replace('(',',').replace(')',',').replace('-','').replace(',v=','').replace(',F=','').split(',')
+		qns3=[m.replace('*','-') for m in qns2]
+		if(len(qns3)>3):
+			ku=int(qns3[0])
+			upstate=(2*ku+1)
+			if(ku>0):
+				upstate=2*upstate
+	return yy-log(upstate) , upstate        
+    @classmethod
+    def read_json(self,file_name):
+        with open(file_name,'r') as infile:
+            x=jload(infile,encoding='utf-8')
+        molecules=x.keys()
+        species={}
+        for mol in molecules:
+            species[mol]=x[mol].keys()
+        k=0
+        for mol in molecules:
+            for spec in species[mol]:
+                    column_names=x[mol][spec].keys()
+        return x, molecules, species,column_names
+    @classmethod
+    def combine_species(self,mol, species,x,A,B):
+        xx=[]
+        xy=[]
+        for spec in species:
+            xx+=x[mol][spec][A]
+            xy+=x[mol][spec][B]
+        return xx, xy
 class App:
     size=25
-    input_dict={0:'Area',1:'AreaE',2:'LamPos',3:'LamPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'LamTrans',9:'LamTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
-
+    input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
+    tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}$',
+    'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,\mathrm{K}$','gu':'$g_u$','F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'M_{$\ln(N_u/g_u)$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$'}
     '''
     The main program
     '''
@@ -131,6 +250,7 @@ class App:
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
         self.analysis_menu.add_command(label="Save to JSON", command=lambda:comp.save_to_json(self.saving_var,self.progress))
         self.analysis_menu.add_command(label="Apply criteria", command=self.clean)
+        self.analysis_menu.add_command(label="Simple Plot", command=self.plotting_window)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
         self.menubar.add_cascade(label="Analysis", menu=self.analysis_menu)
         master.config(menu=self.menubar)
@@ -138,7 +258,7 @@ class App:
         #### frames
         self.Frame=Frame()
         self.Frame.grid(row=0,column=0)
-        self.frames={key:LabelFrame(self.Frame,text=key,width=290,height=180) for key in self.saving_var.keys()}
+        self.frames={key:ttk.LabelFrame(self.Frame,text=key,width=290,height=180) for key in self.saving_var.keys()}
         j_count=0
         for j in self.saving_var.keys():
             self.frames[j].grid(row=0,column=j_count)
@@ -231,7 +351,11 @@ class App:
         ### cleans spectra by criteria from the Statistics column
         self.progress["value"]=0
         self.progress["maximum"]=1000
-        
+        if len(self.saving_var['Files'][1]['Removed'].get())>0:
+            removed_file=open(self.saving_var['Files'][1]['Removed'].get(),'r')
+            removed_list=[line.strip() for line in removed_file]
+        else:
+            removed_list=[]
         self.ErrorCut=self.check_cut_files(self.saving_var['Statistics'][1]['Error cut'].get(),100.)
         self.MaxEu=self.check_cut_files(self.saving_var['Statistics'][1]['Max Eu'].get(),1000.)
         self.special_Eu={}
@@ -242,20 +366,23 @@ class App:
             tkMessageBox.showerror(message="No Spectral line file chosen!")
             return
         if ".json" not in file_candidate:
-            self.x,self.molecules,self.species,self.cnames_dict=comp.save_to_json(self.saving_var,self.progress)
+            self.x,molecules,species,self.cnames_dict=comp.save_to_json(self.saving_var,self.progress)
         else:
             with open(file_candidate, 'r') as outfile:
 		self.x=jload( outfile, encoding='utf-8')
         self.progress["value"] +=100
         
-        self.molecules=self.x.keys()
-        self.species={mol:self.x[mol].keys() for mol in self.molecules}
+        molecules=self.x.keys()
+        molecules=[mol for mol in molecules if mol not in removed_list]
+        self.x={mol:self.x[mol] for mol in self.x.keys() if mol in molecules}
+        species={mol:self.x[mol].keys() for mol in molecules}
         self.progress["value"] +=100
-        for mol in self.molecules:
-            for spec in self.species[mol]:
-                self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['Area'][i]/self.x[mol][spec]['AreaE'][i] for i in range(len(self.x[mol][spec]['Area']))]
-                self.x[mol][spec]['Relative error W']=[self.x[mol][spec]['Wid'][i]/self.x[mol][spec]['WidE'][i] for i in range(len(self.x[mol][spec]['Wid']))]
-                #self.x[mol][spec]['Doppler V']=comp(App).doppler_velocity(self.x[mol][spec]['LamPos'],self.x[mol][spec]['LamTrans'])
+        for mol in molecules:
+            for spec in species[mol]:
+                self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['AreaE'][i]/self.x[mol][spec]['Area'][i] for i in range(len(self.x[mol][spec]['Area']))]
+                self.x[mol][spec]['Relative error W']=[self.x[mol][spec]['WidE'][i]/self.x[mol][spec]['Wid'][i] for i in range(len(self.x[mol][spec]['Wid']))]
+                self.x[mol][spec]['Doppler V'],self.x[mol][spec]['Doppler VError']=comp.doppler_velocity(self.x[mol][spec]['NuPos'],self.x[mol][spec]['NuPosE'],self.x[mol][spec]['NuTrans'],self.x[mol][spec]['NuTransE'])
+                self.x[mol][spec]['Nu/gu'], self.x[mol][spec]['Nu/guE']=comp.Nu_gu(self.x[mol][spec],mol,spec)      
                 if mol not in self.special_Eu.keys():
                     remove=comp.cutting_list(self.MaxEu,self.x[mol][spec]['Eu'])
                 else:
@@ -265,34 +392,56 @@ class App:
                 self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
         self.progress["value"] +=100
         
-        for mol in self.molecules:
-            for i in range(len(self.species[mol])):
-                if self.species[mol][i] not in self.x[mol].keys():
-                    del self.species[mol][i]
+        for mol in molecules:
+            for i in range(len(species[mol])):
+                if species[mol][i] not in self.x[mol].keys():
+                    del species[mol][i]
         remove=[]
         self.progress["value"] +=100
         
         nu_list={}
-        for mol in self.molecules:
-            for spec in self.species[mol]:
-                nu_list[mol]=list(set([y  for spec in self.species[mol] for y in self.x[mol][spec]['LamPos'] ]))
+        for mol in molecules:
+            for spec in species[mol]:
+                nu_list[mol]=list(set([y  for spec in species[mol] for y in self.x[mol][spec]['NuPosS'] ]))
         
-        for mol in self.molecules:
-            for mol1 in self.molecules:
+        for mol in molecules:
+            for mol1 in molecules:
                 for nu_cand in nu_list[mol]:
                     if (nu_cand in nu_list[mol1]) and mol1!=mol:
                         remove.append(nu_cand)
         remove=list(set(remove))
         self.progress["value"] +=100
-        for mol in self.molecules:
-            for spec in self.species[mol]:
+        for mol in molecules:
+            for spec in species[mol]:
                 self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
         self.progress["value"] +=100
+        for mol in molecules:
+                if len([self.x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(self.x[mol][spec]['Area'])) ])<2:
+                    del self.x[mol]
         cleaned_file_candidate=file_candidate.split('.')
         cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
         with open(cleaned_file_candidate, 'w') as outfile:
 		jdump( self.x, outfile, encoding='utf-8')
         self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
+        self.progress["value"] +=100
+        
+    def plotting_window(self):
+        
+        x,molecules,species,column_names=comp.read_json(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())
+        plo=Toplevel(master)
+        val_x=StringVar()
+        val_y=StringVar()
+        set_mol=StringVar()
+        
+        mol0=['All']
+        mol0+=molecules
+        opt_mol=ttk.OptionMenu(plo, set_mol, 'Select Molecule', *mol0 )
+        opt_x=ttk.OptionMenu(plo, val_x, 'X', *column_names)
+        opt_y=ttk.OptionMenu(plo, val_y, 'Y', *column_names)
+        opt_mol.grid(row=0,column=0)
+        opt_x.grid(row=0,column=1)
+        opt_y.grid(row=0,column=2)        
+        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get(),'k.') ,width=10).grid(row=1,column=0)
 
 	
 
@@ -304,11 +453,11 @@ master.wm_title("Line analysis")
 master.mainloop()
 '''
         plt.figure()
-        plt.plot([self.x['CH3OCHOv=0'][s]['Eu'] for s in self.species['CH3OCHOv=0']],[self.x['CH3OCHOv=0'][s]['Tpeak'] for s in self.species['CH3OCHOv=0']],'k.')
+        plt.plot([self.x['CH3OCHOv=0'][s]['Eu'] for s in species['CH3OCHOv=0']],[self.x['CH3OCHOv=0'][s]['Tpeak'] for s in species['CH3OCHOv=0']],'k.')
         plt.savefig('proba.png')
 
-for mol in self.molecules:
-		for s in self.species[mol]:
+for mol in molecules:
+		for s in species[mol]:
 			xx+=self.x[mol][s]['Eu'] 
 			xy+=self.x[mol][s]['Tpeak']
 	plt.plot(xx,xy,'k.')
