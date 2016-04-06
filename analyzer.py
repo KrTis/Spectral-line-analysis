@@ -17,17 +17,18 @@ import os
 from uncertainties import ufloat
 from math import *
 from operator import itemgetter, attrgetter, methodcaller
+from matplotlib.colors import LogNorm
 from scipy.optimize import leastsq
 import numpy as np
-import matplotlib.cm as cm
-from matplotlib.pyplot import figure, plot,show, xlabel,ylabel
+from matplotlib.pyplot import figure, plot,show, contour, imshow, hist2d,colorbar,hexbin
 from collections import OrderedDict
 from scipy import constants
 from json import dump as jdump
 from json import load as jload
+from astroML.plotting.mcmc import convert_to_stdev
 class plotting:
     @classmethod
-    def simple_plot(self,mol,species,xx,A,B,kwargs):
+    def simple_plot(self,mol,species,xx,A,B,opts,opts1,scale,args):
         if mol!='All':
             x,y=comp.combine_species(mol, species[mol],xx,A,B)
         else:
@@ -37,10 +38,20 @@ class plotting:
                 x1,y1=comp.combine_species(m, species[m],xx,A,B)
                 x+=x1
                 y+=y1
-        figure()
-        plot(x,y,kwargs)
-        xlabel(App.tex_output_dict[A])
-        ylabel(App.tex_output_dict[B])
+        fig=figure()
+        ax=fig.add_subplot(111)
+        if opts[0]=='S':
+            ax.plot(x,y,args)
+        if opts[0]=='H':
+            counts, xedges, yedges, im=ax.hist2d(x,y,norm=LogNorm(),bins=scale)
+            colorbar(im)
+        if opts1[0]=='Y':
+            H, xbins, ybins = np.histogram2d(x,y)
+            Nsigma = convert_to_stdev(np.log(H))
+            ax.contour(0.5 * (xbins[1:] + xbins[:-1]),0.5 * (ybins[1:] + ybins[:-1]),Nsigma.T,levels=[0.6827,0.6827,0.9545, 0.9545], colors=['.25','.25','0.5','0.5'],linewidths=2)
+        
+        ax.set_xlabel(App.tex_output_dict[A])
+        ax.set_ylabel(App.tex_output_dict[B])
         show()
 
 class comp:
@@ -227,8 +238,9 @@ class comp:
 class App:
     size=25
     input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
-    tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}$',
-    'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,\mathrm{K}$','gu':'$g_u$','F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'M_{$\ln(N_u/g_u)$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$'}
+    tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
+    'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
+    'F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$'}
     '''
     The main program
     '''
@@ -381,7 +393,7 @@ class App:
             for spec in species[mol]:
                 self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['AreaE'][i]/self.x[mol][spec]['Area'][i] for i in range(len(self.x[mol][spec]['Area']))]
                 self.x[mol][spec]['Relative error W']=[self.x[mol][spec]['WidE'][i]/self.x[mol][spec]['Wid'][i] for i in range(len(self.x[mol][spec]['Wid']))]
-                self.x[mol][spec]['Doppler V'],self.x[mol][spec]['Doppler VError']=comp.doppler_velocity(self.x[mol][spec]['NuPos'],self.x[mol][spec]['NuPosE'],self.x[mol][spec]['NuTrans'],self.x[mol][spec]['NuTransE'])
+                self.x[mol][spec]['Doppler V'],self.x[mol][spec]['Doppler VE']=comp.doppler_velocity(self.x[mol][spec]['NuPos'],self.x[mol][spec]['NuPosE'],self.x[mol][spec]['NuTrans'],self.x[mol][spec]['NuTransE'])
                 self.x[mol][spec]['Nu/gu'], self.x[mol][spec]['Nu/guE']=comp.Nu_gu(self.x[mol][spec],mol,spec)      
                 if mol not in self.special_Eu.keys():
                     remove=comp.cutting_list(self.MaxEu,self.x[mol][spec]['Eu'])
@@ -426,24 +438,42 @@ class App:
         self.progress["value"] +=100
         
     def plotting_window(self):
-        
+
         x,molecules,species,column_names=comp.read_json(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())
         plo=Toplevel(master)
+        plo.wm_title('Simple plotting')
         val_x=StringVar()
         val_y=StringVar()
         set_mol=StringVar()
-        
+        typep=StringVar()
+        typep1=StringVar()
         mol0=['All']
-        mol0+=molecules
+        mol0+=sorted(molecules)
+        column_names=sorted(column_names)
         opt_mol=ttk.OptionMenu(plo, set_mol, 'Select Molecule', *mol0 )
         opt_x=ttk.OptionMenu(plo, val_x, 'X', *column_names)
         opt_y=ttk.OptionMenu(plo, val_y, 'Y', *column_names)
         opt_mol.grid(row=0,column=0)
         opt_x.grid(row=0,column=1)
-        opt_y.grid(row=0,column=2)        
-        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get(),'k.') ,width=10).grid(row=1,column=0)
+        opt_y.grid(row=0,column=2)     
+        
+        self.scale=ttk.Scale(plo, from_=5, to=200, orient=HORIZONTAL,command=self.update_scale,value=5)
 
-	
+        opt_type=ttk.OptionMenu(plo, typep, 'Type of plot', *['Empty','Scatter', 'Histogram'],command=self.there_is_a_scale )
+        opt_type1=ttk.OptionMenu(plo, typep1, 'Contours', *['Yes', 'No'] )
+        self.label_scale=Label(plo)
+        opt_type.grid(row=0,column=3)
+        opt_type1.grid(row=0,column=4)
+        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),int(self.scale.get()),'k.'),width=10).grid(row=2,column=0)
+    def there_is_a_scale(self,evt):
+        if evt=='Histogram':
+            self.label_scale.grid(row=1,column=1)
+            self.scale.grid(row=1,column=0)
+        else:
+            self.label_scale.grid_forget()
+            self.scale.grid_forget()
+    def update_scale(self,evt):
+        self.label_scale.configure(text="Bins: {}".format(int(float(evt))))
 
 master = Tk()
 App(master)
