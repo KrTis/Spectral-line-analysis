@@ -18,7 +18,6 @@ from uncertainties import ufloat
 from math import *
 from operator import itemgetter, attrgetter, methodcaller
 from matplotlib.colors import LogNorm
-from scipy.optimize import leastsq
 import numpy as np
 from matplotlib.pyplot import figure, plot,show, contour, imshow, hist2d,colorbar,hexbin
 from collections import OrderedDict
@@ -248,6 +247,44 @@ class comp:
             xx+=x[mol][spec][A]
             xy+=x[mol][spec][B]
         return xx, xy
+    @classmethod
+    def z_fit(self,T, a, b):
+            ### A fit for partition functions
+            return a * np.exp(b*T)*(T**1.5)
+    @classmethod
+    def get_z(self,T,M_T,pars,M_pars):
+        ### A function that returns the partition function at temperature T
+        if len(pars)==1:
+            return pars*T**1.5, M_pars*np.sqrt(T)*M_T
+        if len(pars)==2:
+            fz=comp.z_fit(T,pars[0],pars[1])
+            return fz, fz*np.sqrt((M_pars[0]/pars[0])**2+(T*M_pars[1])**2+((1.5/T+pars[1])*M_T)**2)
+    @classmethod
+    def fit_population(self,Eu,Nu,NuE):
+        Eu=np.asarray(Eu)
+        Nu=np.asarray(Nu)
+        NuE=np.asarray(NuE)
+        params,covar=curve_fit(comp.rot, Eu, NuE,[100., 10.])
+        sigmas=np.sqrt(np.diag(covar))
+        return params.tolist(), covar.tolist(), sigmas.tolist()
+    @classmethod
+    def fit_rotational(self, mol, species, x):
+        Eu=[]
+        Nu=[]
+        NuE=[]
+        for spec in species[mol]:
+                Eu+=x[spec]['Eu']
+                Nu+=x[spec]['Nu/gu']
+                NuE+=x[spec]['Nu/guE']
+        return fit_population(Eu, Nu, NuE)
+    @classmethod        
+    def rot(self,T,a,b):
+            return -a/T+b
+    @classmethod
+    def column_density(Z, Zerr, NZ, NZerr):
+        N=Z*np.exp(NZ)
+        return N, N*np.sqrt((Zerr/Z)**2+NZerr**2)
+        
 class App:
     size=25
     input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
@@ -396,36 +433,48 @@ class App:
             tkMessageBox.showerror(message="No Spectral line file chosen!")
             return
         if ".json" not in file_candidate:
-            self.x,molecules,species,self.cnames_dict=comp.save_to_json(self.saving_var,self.progress)
+            x,molecules,species,self.cnames_dict=comp.save_to_json(self.saving_var,self.progress)
         else:
             with open(file_candidate, 'r') as outfile:
-		self.x=jload( outfile, encoding='utf-8')
+		x=jload( outfile, encoding='utf-8')
         self.progress["value"] +=100
         
-        molecules=self.x.keys()
+        partfun=self.saving_var['Files'][1]['Partition functions'].get()
+        if len(partfun)>0:
+            partfun=partfun.split('.')
+            if partfun[1]!='json':
+                 self.reading_partition_functions
+            with open(self.saving_var['Files'][1]['Partition functions'].get()) as outfile:
+                    z_file=jload(outfile,encoding='utf-8')
+        else:
+            tkMessageBox.showerror(message="Partition functions not given!")
+            return
+        self.progress["value"] +=100
+        
+        molecules=x.keys()
         molecules=[mol for mol in molecules if mol not in removed_list]
-        self.x={mol:self.x[mol] for mol in self.x.keys() if mol in molecules}
-        species={mol:self.x[mol].keys() for mol in molecules}
+        x={mol:x[mol] for mol in x.keys() if mol in molecules}
+        species={mol:x[mol].keys() for mol in molecules}
         self.progress["value"] +=100
         
         for mol in molecules:
             for spec in species[mol]:
-                self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['AreaE'][i]/self.x[mol][spec]['Area'][i] for i in range(len(self.x[mol][spec]['Area']))]
-                self.x[mol][spec]['Relative error W']=[self.x[mol][spec]['WidE'][i]/self.x[mol][spec]['Wid'][i] for i in range(len(self.x[mol][spec]['Wid']))]
-                self.x[mol][spec]['Doppler V'],self.x[mol][spec]['Doppler VE']=comp.doppler_velocity(self.x[mol][spec]['NuPos'],self.x[mol][spec]['NuPosE'],self.x[mol][spec]['NuTrans'],self.x[mol][spec]['NuTransE'])
-                self.x[mol][spec]['Nu/gu'], self.x[mol][spec]['Nu/guE']=comp.Nu_gu(self.x[mol][spec],mol,spec)      
+                x[mol][spec]['Relative error A']=[x[mol][spec]['AreaE'][i]/x[mol][spec]['Area'][i] for i in range(len(x[mol][spec]['Area']))]
+                x[mol][spec]['Relative error W']=[x[mol][spec]['WidE'][i]/x[mol][spec]['Wid'][i] for i in range(len(x[mol][spec]['Wid']))]
+                x[mol][spec]['Doppler V'],x[mol][spec]['Doppler VE']=comp.doppler_velocity(x[mol][spec]['NuPos'],x[mol][spec]['NuPosE'],x[mol][spec]['NuTrans'],x[mol][spec]['NuTransE'])
+                x[mol][spec]['Nu/gu'], x[mol][spec]['Nu/guE']=comp.Nu_gu(x[mol][spec],mol,spec)      
                 if mol not in self.special_Eu.keys():
-                    remove=comp.cutting_list(self.MaxEu,self.x[mol][spec]['Eu'])
+                    remove=comp.cutting_list(self.MaxEu,x[mol][spec]['Eu'])
                 else:
-                    remove=comp.cutting_list(self.special_Eu[mol],self.x[mol][spec]['Eu'])
-                remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error A'])
-                remove+=comp.cutting_list(self.ErrorCut,self.x[mol][spec]['Relative error W'])
-                self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
+                    remove=comp.cutting_list(self.special_Eu[mol],x[mol][spec]['Eu'])
+                remove+=comp.cutting_list(self.ErrorCut,x[mol][spec]['Relative error A'])
+                remove+=comp.cutting_list(self.ErrorCut,x[mol][spec]['Relative error W'])
+                x[mol][spec]=comp.delete_dict_list(x[mol][spec],remove)
         self.progress["value"] +=100
         
         for mol in molecules:
             for i in range(len(species[mol])):
-                if species[mol][i] not in self.x[mol].keys():
+                if species[mol][i] not in x[mol].keys():
                     del species[mol][i]
         remove=[]
         self.progress["value"] +=100
@@ -433,7 +482,7 @@ class App:
         nu_list={}
         for mol in molecules:
             for spec in species[mol]:
-                nu_list[mol]=list(set([y  for spec in species[mol] for y in self.x[mol][spec]['NuPosS'] ]))
+                nu_list[mol]=list(set([y  for spec in species[mol] for y in x[mol][spec]['NuPosS'] ]))
         
         for mol in molecules:
             for mol1 in molecules:
@@ -445,11 +494,11 @@ class App:
         
         for mol in molecules:
             for spec in species[mol]:
-                self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
+                x[mol][spec]=comp.delete_dict_list(x[mol][spec],remove)
         
         for mol in molecules:
-                if len([self.x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(self.x[mol][spec]['Area'])) ])<2:
-                    del self.x[mol]
+                if len([x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(x[mol][spec]['Area'])) ])<2:
+                    del x[mol]
         self.progress["value"] +=100
         
         cleaned_file_candidate=self.saving_var['Files'][1]['Cleaned Spectral lines'].get()        
@@ -458,7 +507,7 @@ class App:
             cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
             self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
         with open(cleaned_file_candidate, 'w') as outfile:
-		jdump( self.x, outfile, encoding='utf-8')
+		jdump( x, outfile, encoding='utf-8')
         self.progress["value"] +=100
        
         plotting_mol={}
@@ -472,6 +521,18 @@ class App:
 		jdump( plot_names_fc, outfile, encoding='utf-8')
         self.progress["value"] +=100
         
+        for mol in molecules:
+            x[mol]['Rot'],x[mol]['RotCovar'],x[mol]['RotSigmas']=comp.fit_rotational(mol, species,x[mol])
+            if mol in z_file.keys():
+                x[mol]['Z'],x[mol]['ZCov'],x[mol]['ZStdev']=comp.z_fit(x[mol]['Rot'][0],x[mol]['RotSigmas'][0],fit_z[mol]['Fit'],fit_z[mol]['Covar'])
+                x[mol]['N'], x[mol]['Nerr']=comp.column_density(x[mol]['Z'],x[mol]['ZStdev'],x[mol]['Rot'][1],x[mol]['RotSigmas'][1])
+            for spec in species[mol]:
+                x[mol][spec]['Rot'],x[mol][spec]['RotCovar'],x[mol][spec]['RotSigmas']=comp.fit_population(x[mol][spec]['Eu'], x[mol][spec][['Nu/gu']],x[mol][spec][['Nu/guE']])
+                if mol in z_file.keys():
+                    x[mol][spec]['Z'],x[mol][spec]['ZCov'],x[mol][spec]['ZStdev']=comp.z_fit(x[mol][spec]['Rot'][0],x[mol][spec]['RotSigmas'][0],fit_z[mol][spec]['Fit'],fit_z[mol][spec]['Covar'])
+                    x[mol][spec]['N'], x[mol][spec]['Nerr']=comp.column_density(x[mol][spec]['Z'],x[mol][spec]['ZStdev'],x[mol][spec]['Rot'][1],x[mol][spec]['RotSigmas'][1])
+        self.progress["value"] +=100
+                
     def plotting_window(self):
 
         x,molecules,species,column_names=comp.read_json(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())
@@ -513,6 +574,10 @@ class App:
         self.label_scale.configure(text="Bins: {}".format(int(float(evt))))
         
     def reading_partition_functions(self):
+        ### A function for fitting partition functions
+        self.progress["value"]=0
+        self.progress["maximum"]=100
+        
         z_name=self.saving_var['Files'][1]['Partition functions'].get()
         if len(z_name)==0:
             tkMessageBox.showerror(message="No Partition function data chosen!")
@@ -523,12 +588,14 @@ class App:
             return
         z_file=open(z_name,'r')
         z_name=zz[0]+'.json'
+        self.progress["value"]+=100
+        
         x=np.asarray([300,225,150,75,37.5,18.75,9.375])
         z_actions={'Fitting':9,'Rotational':5}
         l=1
         partition_functions={}
-        def z_fit(x, a, b):
-            return a * np.exp(b*x)*(x**1.5)
+        self.progress["value"]+=0
+        self.progress["maximum"]=20
         for line in z_file:
             line=line.split(':')
             if len(line) not in z_actions.values():
@@ -539,15 +606,21 @@ class App:
             y=np.asarray([float(line[mm]) for mm in range(1,len(line)-1)])
             mol_weight=float(line[len(line)-1])
             if len(line)==z_actions['Fitting']:
-                popt, pcov = curve_fit(z_fit, x, y,[1.0, 0.0001])
+                popt, pcov = curve_fit(comp.z_fit, x, y,[1.0, 0.0001])
                 partition_functions[line[0]]={'Fit':popt.tolist(),'Covariance':pcov.tolist(),'Stdev':np.sqrt(np.diag(pcov)).tolist()}
             if len(line)==z_actions['Rotational']:
                 con=(5.331035*10**6)/np.sqrt(y[0]*y[1]*y[2])
-                partition_functions[line[0]]={'Constant':con,'Stdev':1.5*con}
-        #print partition_functions
+                partition_functions[line[0]]={'Fit':con,'Stdev':1.5*con}
+            self.progress["value"]+=1
+            
+        #save partition_functions
         with open(z_name, 'w') as outfile:
-		jdump(partition_functions , outfile, encoding='utf-8')
+                jdump(partition_functions , outfile, encoding='utf-8')
         self.saving_var['Files'][1]['Partition functions'].set(z_name)
+        
+    def create_population_diagrams(self):
+        pass
+                                
                 
 
 master = Tk()
@@ -556,15 +629,3 @@ App(master)
 # display the menu
 master.wm_title("Line analysis")
 master.mainloop()
-'''
-        plt.figure()
-        plt.plot([self.x['CH3OCHOv=0'][s]['Eu'] for s in species['CH3OCHOv=0']],[self.x['CH3OCHOv=0'][s]['Tpeak'] for s in species['CH3OCHOv=0']],'k.')
-        plt.savefig('proba.png')
-
-for mol in molecules:
-		for s in species[mol]:
-			xx+=self.x[mol][s]['Eu'] 
-			xy+=self.x[mol][s]['Tpeak']
-	plt.plot(xx,xy,'k.')
-	plt.show()
-'''
