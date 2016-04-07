@@ -26,6 +26,9 @@ from scipy import constants
 from json import dump as jdump
 from json import load as jload
 from astroML.plotting.mcmc import convert_to_stdev
+from sklearn import linear_model
+from sklearn.gaussian_process import GaussianProcess
+from scipy.optimize import curve_fit
 class plotting:
     @classmethod
     def simple_plot(self,mol,species,xx,A,B,opts,opts1,scale,args):
@@ -38,6 +41,10 @@ class plotting:
                 x1,y1=comp.combine_species(m, species[m],xx,A,B)
                 x+=x1
                 y+=y1
+                
+                
+       
+
         fig=figure()
         ax=fig.add_subplot(111)
         if opts[0]=='S':
@@ -49,7 +56,13 @@ class plotting:
             H, xbins, ybins = np.histogram2d(x,y)
             Nsigma = convert_to_stdev(np.log(H))
             ax.contour(0.5 * (xbins[1:] + xbins[:-1]),0.5 * (ybins[1:] + ybins[:-1]),Nsigma.T,levels=[0.6827,0.6827,0.9545, 0.9545], colors=['.25','.25','0.5','0.5'],linewidths=2)
-        
+        x=np.array(x).reshape((len(x),1))
+        y=np.array(y).reshape((len(y),1))
+        regr = linear_model.LinearRegression()
+        regr.fit(x,y)        
+        plot(x, regr.predict(x), color='blue',
+         linewidth=3)
+        print regr.coef_
         ax.set_xlabel(App.tex_output_dict[A])
         ax.set_ylabel(App.tex_output_dict[B])
         show()
@@ -241,17 +254,20 @@ class App:
     tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
     'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
     'F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$'}
+    files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Eu','Plotting names','Partition functions']
+    source_list=['Source name','LSR','Min Frequency','Max Frequency','Column density of H2','Column density error'] 
+    statistics_list=['Pearson limit','Max Eu','Error cut']
     '''
     The main program
     '''
     def __init__(self,master):
         ### Dictionary containing data on all frames in the main window
         self.saving_var={'Files':[StringVar(),
-                             OrderedDict([ ('Spectral lines',StringVar()),('Cleaned Spectral lines',StringVar()), ('Spectrum',StringVar()), ('Removed',StringVar()), ('Special Eu',StringVar())])],
+                             OrderedDict([ (x,StringVar()) for x in App.files_list])],
                     'Source':[StringVar(),
-                              OrderedDict([('Source name',StringVar()), ('LSR',StringVar()), ('Min Frequency',StringVar()), ('Max Frequency',StringVar()), ( 'Column density of H2',StringVar()), ('Column density error',StringVar()) ])],
+                              OrderedDict([(x,StringVar()) for x in App.source_list])],
                     'Statistics':[StringVar(),
-                                  OrderedDict([('Pearson limit',StringVar()),('Max Eu',StringVar()),('Error cut',StringVar())])]}
+                                  OrderedDict([(x,StringVar()) for x in App.statistics_list])]}
         
         #### Menu
         self.menubar=Menu(master)
@@ -261,6 +277,7 @@ class App:
         self.file_menu.add_command(label="Save properties", command=lambda:self.save_window(self.saving_var))
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
         self.analysis_menu.add_command(label="Save to JSON", command=lambda:comp.save_to_json(self.saving_var,self.progress))
+        self.analysis_menu.add_command(label="Save Partition functions to JSON", command=self.reading_partition_functions)
         self.analysis_menu.add_command(label="Apply criteria", command=self.clean)
         self.analysis_menu.add_command(label="Simple Plot", command=self.plotting_window)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
@@ -363,6 +380,7 @@ class App:
         ### cleans spectra by criteria from the Statistics column
         self.progress["value"]=0
         self.progress["maximum"]=1000
+        
         if len(self.saving_var['Files'][1]['Removed'].get())>0:
             removed_file=open(self.saving_var['Files'][1]['Removed'].get(),'r')
             removed_list=[line.strip() for line in removed_file]
@@ -389,6 +407,7 @@ class App:
         self.x={mol:self.x[mol] for mol in self.x.keys() if mol in molecules}
         species={mol:self.x[mol].keys() for mol in molecules}
         self.progress["value"] +=100
+        
         for mol in molecules:
             for spec in species[mol]:
                 self.x[mol][spec]['Relative error A']=[self.x[mol][spec]['AreaE'][i]/self.x[mol][spec]['Area'][i] for i in range(len(self.x[mol][spec]['Area']))]
@@ -423,18 +442,34 @@ class App:
                         remove.append(nu_cand)
         remove=list(set(remove))
         self.progress["value"] +=100
+        
         for mol in molecules:
             for spec in species[mol]:
                 self.x[mol][spec]=comp.delete_dict_list(self.x[mol][spec],remove)
-        self.progress["value"] +=100
+        
         for mol in molecules:
                 if len([self.x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(self.x[mol][spec]['Area'])) ])<2:
                     del self.x[mol]
-        cleaned_file_candidate=file_candidate.split('.')
-        cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
+        self.progress["value"] +=100
+        
+        cleaned_file_candidate=self.saving_var['Files'][1]['Cleaned Spectral lines'].get()        
+        if len(cleaned_file_candidate)==0:
+            cleaned_file_candidate=file_candidate.split('.')
+            cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
+            self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
         with open(cleaned_file_candidate, 'w') as outfile:
 		jdump( self.x, outfile, encoding='utf-8')
-        self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
+        self.progress["value"] +=100
+       
+        plotting_mol={}
+        for mol in molecules:
+            plotting_mol[mol]=mol.strip().replace(' ','\,').replace('13C',r'^{13}C').replace('H2','H_{2}').replace('H3','H_{3}').replace('H4','H_{4}').replace('C2','C_{2}').replace(')2',')_{2}')
+        plot_names_fc=self.saving_var['Files'][1]['Plotting names'].get()
+        if len(plot_names_fc)==0:
+            plot_names_fc='plotting_names.json'
+            self.saving_var['Files'][1]['Plotting names'].set('plotting_names.json')
+        with open(plot_names_fc, 'w') as outfile:
+		jdump( plot_names_fc, outfile, encoding='utf-8')
         self.progress["value"] +=100
         
     def plotting_window(self):
@@ -465,6 +500,7 @@ class App:
         opt_type.grid(row=0,column=3)
         opt_type1.grid(row=0,column=4)
         ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),int(self.scale.get()),'k.'),width=10).grid(row=2,column=0)
+        
     def there_is_a_scale(self,evt):
         if evt=='Histogram':
             self.label_scale.grid(row=1,column=1)
@@ -472,8 +508,47 @@ class App:
         else:
             self.label_scale.grid_forget()
             self.scale.grid_forget()
+            
     def update_scale(self,evt):
         self.label_scale.configure(text="Bins: {}".format(int(float(evt))))
+        
+    def reading_partition_functions(self):
+        z_name=self.saving_var['Files'][1]['Partition functions'].get()
+        if len(z_name)==0:
+            tkMessageBox.showerror(message="No Partition function data chosen!")
+            return
+        zz=z_name.split('.')
+        if zz[1]=='json':
+            tkMessageBox.showerror(message="Partition functions have already been read!")
+            return
+        z_file=open(z_name,'r')
+        z_name=zz[0]+'.json'
+        x=np.asarray([300,225,150,75,37.5,18.75,9.375])
+        z_actions={'Fitting':9,'Rotational':5}
+        l=1
+        partition_functions={}
+        def z_fit(x, a, b):
+            return a * np.exp(b*x)*(x**1.5)
+        for line in z_file:
+            line=line.split(':')
+            if len(line) not in z_actions.values():
+                tkMessageBox.showerror(message="Incorrect Partition function in line {}!".format(l))
+                return
+            l+=1
+            
+            y=np.asarray([float(line[mm]) for mm in range(1,len(line)-1)])
+            mol_weight=float(line[len(line)-1])
+            if len(line)==z_actions['Fitting']:
+                popt, pcov = curve_fit(z_fit, x, y,[1.0, 0.0001])
+                partition_functions[line[0]]={'Fit':popt.tolist(),'Covariance':pcov.tolist(),'Stdev':np.sqrt(np.diag(pcov)).tolist()}
+            if len(line)==z_actions['Rotational']:
+                con=(5.331035*10**6)/np.sqrt(y[0]*y[1]*y[2])
+                partition_functions[line[0]]={'Constant':con,'Stdev':1.5*con}
+        #print partition_functions
+        with open(z_name, 'w') as outfile:
+		jdump(partition_functions , outfile, encoding='utf-8')
+        self.saving_var['Files'][1]['Partition functions'].set(z_name)
+                
 
 master = Tk()
 App(master)
