@@ -19,7 +19,7 @@ from math import *
 from operator import itemgetter, attrgetter, methodcaller
 from matplotlib.colors import LogNorm
 import numpy as np
-from matplotlib.pyplot import figure, plot,show, contour, imshow, hist2d,colorbar,hexbin
+from matplotlib.pyplot import figure, plot,show, contour, hist2d,colorbar,savefig,errorbar
 from collections import OrderedDict
 from scipy import constants
 from json import dump as jdump
@@ -28,6 +28,7 @@ from astroML.plotting.mcmc import convert_to_stdev
 from sklearn import linear_model
 from sklearn.gaussian_process import GaussianProcess
 from scipy.optimize import curve_fit
+
 class plotting:
     @classmethod
     def simple_plot(self,mol,species,xx,A,B,opts,opts1,scale,args):
@@ -41,8 +42,8 @@ class plotting:
                 x+=x1
                 y+=y1
                 
-                
-       
+        with open('rotdiag.json','r') as outfile:
+           rot=jload(outfile,encoding='utf-8')
 
         fig=figure()
         ax=fig.add_subplot(111)
@@ -55,18 +56,28 @@ class plotting:
             H, xbins, ybins = np.histogram2d(x,y)
             Nsigma = convert_to_stdev(np.log(H))
             ax.contour(0.5 * (xbins[1:] + xbins[:-1]),0.5 * (ybins[1:] + ybins[:-1]),Nsigma.T,levels=[0.6827,0.6827,0.9545, 0.9545], colors=['.25','.25','0.5','0.5'],linewidths=2)
-        x=np.array(x).reshape((len(x),1))
-        y=np.array(y).reshape((len(y),1))
-        regr = linear_model.LinearRegression()
-        regr.fit(x,y)        
-        plot(x, regr.predict(x), color='blue',
-         linewidth=3)
-        print regr.coef_
+        
+        if A=='Eu' and B=='Nu/gu':
+            y=[comp.rot(x1,rot[mol]['Rot'][0],rot[mol]['Rot'][1]) for x1 in x]
+            plot(x,y)
+        else:
+            x=np.array(x).reshape((len(x),1))
+            y=np.array(y).reshape((len(y),1))
+            regr = linear_model.LinearRegression()
+            regr.fit(x,y)        
+            plot(x, regr.predict(x), color='blue',linewidth=3)
         ax.set_xlabel(App.tex_output_dict[A])
         ax.set_ylabel(App.tex_output_dict[B])
         show()
 
 class comp:
+    @classmethod
+    def len1(self,x):
+        try:
+            len(x)
+            return len(x)
+        except TypeError:
+            return 1
     @classmethod
     def cutting_list(self,limit,data):
         length=len(data)
@@ -110,7 +121,6 @@ class comp:
         for line in input_file:
             line=line.strip()
             line=line.split(':')
-            print line
             for j in App.input_dict.keys():
                 if j!=2:                
                     line[j]=float(line[j])
@@ -254,9 +264,9 @@ class comp:
     @classmethod
     def get_z(self,T,M_T,pars,M_pars):
         ### A function that returns the partition function at temperature T
-        if len(pars)==1:
+        if comp.len1(pars)==1:
             return pars*T**1.5, M_pars*np.sqrt(T)*M_T
-        if len(pars)==2:
+        if comp.len1(pars)==2:
             fz=comp.z_fit(T,pars[0],pars[1])
             return fz, fz*np.sqrt((M_pars[0]/pars[0])**2+(T*M_pars[1])**2+((1.5/T+pars[1])*M_T)**2)
     @classmethod
@@ -264,7 +274,7 @@ class comp:
         Eu=np.asarray(Eu)
         Nu=np.asarray(Nu)
         NuE=np.asarray(NuE)
-        params,covar=curve_fit(comp.rot, Eu, NuE,[100., 10.])
+        params,covar=curve_fit(comp.rot, Eu,Nu,[100, 20.],sigma=NuE)
         sigmas=np.sqrt(np.diag(covar))
         return params.tolist(), covar.tolist(), sigmas.tolist()
     @classmethod
@@ -276,12 +286,13 @@ class comp:
                 Eu+=x[spec]['Eu']
                 Nu+=x[spec]['Nu/gu']
                 NuE+=x[spec]['Nu/guE']
-        return fit_population(Eu, Nu, NuE)
+        a, b, c=comp.fit_population(Eu, Nu, NuE)
+        return Eu, Nu, NuE, a, b,c
     @classmethod        
-    def rot(self,T,a,b):
-            return -a/T+b
+    def rot(self,Eu,a,b):
+            return -Eu/a+b
     @classmethod
-    def column_density(Z, Zerr, NZ, NZerr):
+    def column_density(self,Z, Zerr, NZ, NZerr):
         N=Z*np.exp(NZ)
         return N, N*np.sqrt((Zerr/Z)**2+NZerr**2)
         
@@ -394,7 +405,7 @@ class App:
                     line1=line.split(':')
                     for j in sorted(save_var[i][1].keys()):
                         if line1[0]==j:
-                            save_var[i][1][j].set(line1[1])
+                            save_var[i][1][j].set(line1[1].strip())
                 f.close()
         wind.destroy()
         
@@ -499,16 +510,10 @@ class App:
         for mol in molecules:
                 if len([x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(x[mol][spec]['Area'])) ])<2:
                     del x[mol]
+        molecules=[mol for mol in molecules if mol in x.keys()]
+        species={key:val for key,val in species.items() if key in molecules}
         self.progress["value"] +=100
         
-        cleaned_file_candidate=self.saving_var['Files'][1]['Cleaned Spectral lines'].get()        
-        if len(cleaned_file_candidate)==0:
-            cleaned_file_candidate=file_candidate.split('.')
-            cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
-            self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
-        with open(cleaned_file_candidate, 'w') as outfile:
-		jdump( x, outfile, encoding='utf-8')
-        self.progress["value"] +=100
        
         plotting_mol={}
         for mol in molecules:
@@ -521,16 +526,54 @@ class App:
 		jdump( plot_names_fc, outfile, encoding='utf-8')
         self.progress["value"] +=100
         
+        cleaned_file_candidate=self.saving_var['Files'][1]['Cleaned Spectral lines'].get()        
+        if len(cleaned_file_candidate)==0:
+            cleaned_file_candidate=file_candidate.split('.')
+            cleaned_file_candidate=cleaned_file_candidate[0]+'-clean.json'
+            self.saving_var['Files'][1]['Cleaned Spectral lines'].set(cleaned_file_candidate)
+        with open(cleaned_file_candidate, 'w') as outfile:
+		jdump( x, outfile, encoding='utf-8')
+        y={mol:{} for mol in molecules}
         for mol in molecules:
-            x[mol]['Rot'],x[mol]['RotCovar'],x[mol]['RotSigmas']=comp.fit_rotational(mol, species,x[mol])
-            if mol in z_file.keys():
-                x[mol]['Z'],x[mol]['ZCov'],x[mol]['ZStdev']=comp.z_fit(x[mol]['Rot'][0],x[mol]['RotSigmas'][0],fit_z[mol]['Fit'],fit_z[mol]['Covar'])
-                x[mol]['N'], x[mol]['Nerr']=comp.column_density(x[mol]['Z'],x[mol]['ZStdev'],x[mol]['Rot'][1],x[mol]['RotSigmas'][1])
-            for spec in species[mol]:
-                x[mol][spec]['Rot'],x[mol][spec]['RotCovar'],x[mol][spec]['RotSigmas']=comp.fit_population(x[mol][spec]['Eu'], x[mol][spec][['Nu/gu']],x[mol][spec][['Nu/guE']])
+            Eu, Nu, NuE, y[mol]['Rot'],y[mol]['RotCovar'],y[mol]['RotSigmas']=comp.fit_rotational(mol, species,x[mol])
+            fig=figure()
+            ax=fig.add_subplot(111)
+            ax.errorbar(Eu,Nu,yerr=NuE,fmt='k.',ecolor='black')
+            ax.set_title("$ "+plotting_mol[mol]+"$")
+            ax.set_xlabel(App.tex_output_dict['Eu'])
+            ax.set_ylabel(App.tex_output_dict['Nu/gu'])
+            if y[mol]['RotSigmas'][0]!=float("inf"):
+                text_plot="${:.2uL}$ K".format(ufloat(y[mol]['Rot'][0],y[mol]['RotSigmas'][0]))
+            else:
+                text_plot="${0:.2f}$ K".format(y[mol]['Rot'][0])
+            
+            x_line=np.linspace(0, 450, 100)
+            y_line=[comp.rot(x1,y[mol]['Rot'][0],y[mol]['Rot'][1]) for x1 in x_line]
+            ax.plot(x_line,y_line)
+            
+            if y[mol]['Rot'][0]>0:
                 if mol in z_file.keys():
-                    x[mol][spec]['Z'],x[mol][spec]['ZCov'],x[mol][spec]['ZStdev']=comp.z_fit(x[mol][spec]['Rot'][0],x[mol][spec]['RotSigmas'][0],fit_z[mol][spec]['Fit'],fit_z[mol][spec]['Covar'])
+                        y[mol]['Z'],y[mol]['ZStdev']=comp.get_z(y[mol]['Rot'][0],y[mol]['RotSigmas'][0],z_file[mol]['Fit'],z_file[mol]['Stdev'])
+                        y[mol]['N'], y[mol]['Nerr']=comp.column_density(y[mol]['Z'],y[mol]['ZStdev'],y[mol]['Rot'][1],y[mol]['RotSigmas'][1])
+                        if y[mol]['Nerr']!=float("inf"):
+                            if  y[mol]['N']!=float("inf"):
+                                text_plot+="\n${:.2uL}$".format(ufloat(y[mol]['N'],y[mol]['Nerr']))+r"$\,\mathrm{cm^{-2}}$"
+                        else:
+                            text_plot+="\n${0:.2f}$".format(y[mol]['N'])+r"$\,\mathrm{cm^{-2}}$"
+            ax.text(.65,.9,text_plot,transform = ax.transAxes)
+            fig.savefig(str('mols/'+mol+'.png'))
+        with open('rotdiag.json', 'w') as outfile:
+		jdump( y, outfile, encoding='utf-8')
+        '''
+            for spec in species[mol]:
+                x[mol][spec]['Rot'],x[mol][spec]['RotCovar'],x[mol][spec]['RotSigmas']=comp.fit_population(x[mol][spec]['Eu'], x[mol][spec]['Nu/gu'],x[mol][spec]['Nu/guE'])
+                if mol in z_file.keys():
+                    x[mol][spec]['Z'],x[mol][spec]['ZStdev']=comp.get_z(x[mol][spec]['Rot'][0],x[mol][spec]['RotSigmas'][0],z_file[mol][spec]['Fit'],z_file[mol][spec]['Stdev'])
                     x[mol][spec]['N'], x[mol][spec]['Nerr']=comp.column_density(x[mol][spec]['Z'],x[mol][spec]['ZStdev'],x[mol][spec]['Rot'][1],x[mol][spec]['RotSigmas'][1])
+        '''
+        self.progress["value"] +=100
+        
+       
         self.progress["value"] +=100
                 
     def plotting_window(self):
@@ -607,7 +650,7 @@ class App:
             mol_weight=float(line[len(line)-1])
             if len(line)==z_actions['Fitting']:
                 popt, pcov = curve_fit(comp.z_fit, x, y,[1.0, 0.0001])
-                partition_functions[line[0]]={'Fit':popt.tolist(),'Covariance':pcov.tolist(),'Stdev':np.sqrt(np.diag(pcov)).tolist()}
+                partition_functions[line[0]]={'Fit':popt.tolist(),'Covar':pcov.tolist(),'Stdev':np.sqrt(np.diag(pcov)).tolist()}
             if len(line)==z_actions['Rotational']:
                 con=(5.331035*10**6)/np.sqrt(y[0]*y[1]*y[2])
                 partition_functions[line[0]]={'Fit':con,'Stdev':1.5*con}
