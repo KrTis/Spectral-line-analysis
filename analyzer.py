@@ -31,7 +31,7 @@ from scipy.optimize import curve_fit
 
 class plotting(App):
     @classmethod
-    def simple_plot(self,mol,species,xx,A,B,opts,opts1,scale,args):
+    def simple_plot(self,mol,species,xx,A,B,opts,opts1,opts2,opts3,scale,args):
         if mol!='All':
             x,y=comp.combine_species(mol, species[mol],xx,A,B)
         else:
@@ -47,9 +47,9 @@ class plotting(App):
 
         fig=figure()
         ax=fig.add_subplot(111)
-        if opts[0]=='S':
+        if opts3[0]=='Y':
             ax.plot(x,y,args)
-        if opts[0]=='H':
+        if opts[0]=='Y':
             counts, xedges, yedges, im=ax.hist2d(x,y,norm=LogNorm(),bins=scale)
             colorbar(im)
         if opts1[0]=='Y':
@@ -60,7 +60,7 @@ class plotting(App):
         if A=='Eu' and B=='Nu/gu':
             y=[comp.rot(x1,rot[mol]['Rot'][0],rot[mol]['Rot'][1]) for x1 in x]
             plot(x,y)
-        else:
+        elif opts2=='Yes':
             x=np.array(x).reshape((len(x),1))
             y=np.array(y).reshape((len(y),1))
             regr = linear_model.LinearRegression()
@@ -407,7 +407,7 @@ class App:
     input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
     tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
     'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
-    'F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$'}
+    'F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$','Sigma':'$\sigma$'}
     files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Eu','Plotting names','Partition functions']
     source_list=['Source name','LSR','Min Frequency','Max Frequency','Column density of H2','Column density error'] 
     statistics_list=['Pearson limit','Max Eu','Error cut']
@@ -745,6 +745,8 @@ class App:
         set_mol=StringVar()
         typep=StringVar()
         typep1=StringVar()
+        typep2=StringVar()
+        typep3=StringVar()
         mol0=['All']
         mol0+=sorted(molecules)
         column_names=sorted(column_names)
@@ -757,15 +759,19 @@ class App:
         
         self.scale=ttk.Scale(plo, from_=5, to=200, orient=HORIZONTAL,command=self.update_scale,value=5)
 
-        opt_type=ttk.OptionMenu(plo, typep, 'Type of plot', *['Empty','Scatter', 'Histogram'],command=self.there_is_a_scale )
+        opt_type=ttk.OptionMenu(plo, typep, 'Histogram', *['Yes', 'No'] ,command=self.there_is_a_scale )
         opt_type1=ttk.OptionMenu(plo, typep1, 'Contours', *['Yes', 'No'] )
+        opt_type2=ttk.OptionMenu(plo, typep2, 'Fit', *['Yes', 'No'] )
+        opt_type3=ttk.OptionMenu(plo, typep3, 'Scatter', *['Yes', 'No'] )
         self.label_scale=Label(plo)
         opt_type.grid(row=0,column=3)
         opt_type1.grid(row=0,column=4)
-        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),int(self.scale.get()),'k.'),width=10).grid(row=2,column=0)
+        opt_type2.grid(row=0,column=5)
+        opt_type3.grid(row=0,column=6)
+        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),typep2.get(),typep3.get(),int(self.scale.get()),'k.'),width=10).grid(row=2,column=0)
         
     def there_is_a_scale(self,evt):
-        if evt=='Histogram':
+        if evt=='Yes':
             self.label_scale.grid(row=1,column=1)
             self.scale.grid(row=1,column=0)
         else:
