@@ -19,7 +19,7 @@ from math import *
 from operator import itemgetter, attrgetter, methodcaller
 from matplotlib.colors import LogNorm
 import numpy as np
-from matplotlib.pyplot import figure, plot,show, contour, hist2d,colorbar,savefig,errorbar,close,ioff,ion
+from matplotlib.pyplot import figure, plot,show, contour, hist2d,hist,colorbar,savefig,errorbar,close,ioff,ion
 from collections import OrderedDict
 from scipy import constants
 from json import dump as jdump
@@ -28,10 +28,56 @@ from astroML.plotting.mcmc import convert_to_stdev
 from sklearn import linear_model
 from sklearn.gaussian_process import GaussianProcess
 from scipy.optimize import curve_fit
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+class VerticalScrolledFrame(Frame):
+    """A pure Tkinter scrollable frame that actually works!
+    * Use the 'interior' attribute to place widgets inside the scrollable frame
+    * Construct and pack/place/grid normally
+    * This frame only allows vertical scrolling
 
-class plotting(App):
+    """
+    def __init__(self, parent, *args, **kw):
+        Frame.__init__(self, parent, *args, **kw)            
+
+        # create a canvas object and a vertical scrollbar for scrolling it
+        vscrollbar = Scrollbar(self, orient=VERTICAL)
+        vscrollbar.pack(fill=Y, side=RIGHT, expand=FALSE)
+        canvas = Canvas(self, bd=0, highlightthickness=0,
+                        yscrollcommand=vscrollbar.set)
+        canvas.config(width=666, height=666)
+        canvas.pack(side=LEFT, fill=BOTH, expand=TRUE)
+        vscrollbar.config(command=canvas.yview)
+
+        # reset the view
+        canvas.xview_moveto(0)
+        canvas.yview_moveto(0)
+
+        # create a frame inside the canvas which will be scrolled with it
+        self.interior = interior = Frame(canvas)
+        interior_id = canvas.create_window(0, 0, window=interior,
+                                           anchor=NW)
+
+        # track changes to the canvas and frame width and sync them,
+        # also updating the scrollbar
+        def _configure_interior(event):
+            # update the scrollbars to match the size of the inner frame
+            size = (interior.winfo_reqwidth(), interior.winfo_reqheight())
+            canvas.config(scrollregion="0 0 %s %s" % size)
+            if interior.winfo_reqwidth() != canvas.winfo_width():
+                # update the canvas's width to fit the inner frame
+                canvas.config(width=interior.winfo_reqwidth())
+        interior.bind('<Configure>', _configure_interior)
+
+        def _configure_canvas(event):
+            if interior.winfo_reqwidth() != canvas.winfo_width():
+                # update the inner frame's width to fill the canvas
+                canvas.itemconfigure(interior_id, width=canvas.winfo_width())
+        canvas.bind('<Configure>', _configure_canvas)
+        
+class plotting(object):
     @classmethod
-    def simple_plot(self,mol,species,xx,A,B,opts,opts1,opts2,opts3,scale,args):
+    def simple_plot(self,plo1,mol,species,xx,A,B,opts,opts1,opts2,opts3,scale,args):
+        ioff()
         if mol!='All':
             x,y=comp.combine_species(mol, species[mol],xx,A,B)
         else:
@@ -53,7 +99,7 @@ class plotting(App):
             counts, xedges, yedges, im=ax.hist2d(x,y,norm=LogNorm(),bins=scale)
             colorbar(im)
         if opts1[0]=='Y':
-            H, xbins, ybins = np.histogram2d(x,y)
+            H, xbins, ybins = np.histogram2d(x,y,bins=scale)
             Nsigma = convert_to_stdev(np.log(H))
             ax.contour(0.5 * (xbins[1:] + xbins[:-1]),0.5 * (ybins[1:] + ybins[:-1]),Nsigma.T,levels=[0.6827,0.6827,0.9545, 0.9545], colors=['.25','.25','0.5','0.5'],linewidths=2)
         
@@ -68,7 +114,23 @@ class plotting(App):
             plot(x, regr.predict(x), color='blue',linewidth=3)
         ax.set_xlabel(App.tex_output_dict[A])
         ax.set_ylabel(App.tex_output_dict[B])
-        show()
+        pframe=Frame(plo1)
+        pframe.grid(row=2,column=0)
+        canvas = FigureCanvasTkAgg(fig, master=pframe)
+        #canvas.show()
+        canvas.get_tk_widget().pack()
+        toolbar = NavigationToolbar2TkAgg(canvas, pframe)
+        toolbar.update()
+        canvas._tkcanvas.pack()
+        close(fig)
+        ion()
+        def on_key_event(event):
+            key_press_handler(event, canvas, toolbar)
+        
+        canvas.mpl_connect('key_press_event', on_key_event)
+
+        close(fig)
+        #ion()
     @classmethod
     def saving_plot(self,pclass,Eu, Nu, NuE,ymol,pmol,ax,label,ypos,**kwargs):
             ax.set_xlim(0,450.)
@@ -407,7 +469,8 @@ class App:
     input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
     tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
     'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
-    'F0':'$\nu_0\,\mathrm{MHz$}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$}','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$','Sigma':'$\sigma$'}
+    'F0':'$\\nu_0\,\mathrm{MHz}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$','Sigma':'$\sigma$'}
+    changeable_list=[ u'Noise', u'Relative error W', u'Area', u'Tpeak',  u'Wid', u'Eu', u'Doppler V', u'Sigma', u'Relative error A']    
     files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Eu','Plotting names','Partition functions']
     source_list=['Source name','LSR','Min Frequency','Max Frequency','Column density of H2','Column density error'] 
     statistics_list=['Pearson limit','Max Eu','Error cut']
@@ -468,6 +531,7 @@ class App:
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
         self.analysis_menu.add_command(label="Save to JSON", command=lambda:comp.save_to_json(self.saving_var,self.progress))
         self.analysis_menu.add_command(label="Save Partition functions to JSON", command=self.reading_partition_functions)
+        self.analysis_menu.add_command(label="Histograms", command=self.hist_cut)
         self.analysis_menu.add_command(label="Apply criteria", command=self.clean)
         self.analysis_menu.add_command(label="Simple Plot", command=self.plotting_window)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
@@ -738,8 +802,11 @@ class App:
     def plotting_window(self):
 
         x,molecules,species,column_names=comp.read_json(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())
-        plo=Toplevel(master)
-        plo.wm_title('Simple plotting')
+        plo1=Toplevel(master)
+        plo1.wm_title('Simple plotting')
+        plo=Frame(plo1)
+        plo.grid(row=0,column=0)
+
         val_x=StringVar()
         val_y=StringVar()
         set_mol=StringVar()
@@ -758,21 +825,24 @@ class App:
         opt_y.grid(row=0,column=2)     
         
         self.scale=ttk.Scale(plo, from_=5, to=200, orient=HORIZONTAL,command=self.update_scale,value=5)
-
-        opt_type=ttk.OptionMenu(plo, typep, 'Histogram', *['Yes', 'No'] ,command=self.there_is_a_scale )
+        
+        opt_type=ttk.OptionMenu(plo, typep, 'Histogram', *['Yes', 'No'] )
         opt_type1=ttk.OptionMenu(plo, typep1, 'Contours', *['Yes', 'No'] )
         opt_type2=ttk.OptionMenu(plo, typep2, 'Fit', *['Yes', 'No'] )
         opt_type3=ttk.OptionMenu(plo, typep3, 'Scatter', *['Yes', 'No'] )
         self.label_scale=Label(plo)
-        opt_type.grid(row=0,column=3)
-        opt_type1.grid(row=0,column=4)
-        opt_type2.grid(row=0,column=5)
-        opt_type3.grid(row=0,column=6)
-        ttk.Button(plo,text='Plot',command=lambda:plotting.simple_plot(set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),typep2.get(),typep3.get(),int(self.scale.get()),'k.'),width=10).grid(row=2,column=0)
+        
+        opt_type.grid(row=0,column=4)
+        opt_type1.grid(row=0,column=5)
+        opt_type2.grid(row=0,column=6)
+        opt_type3.grid(row=0,column=3)
+        self.scale.grid(row=0,column=7)
+        self.label_scale.grid(row=0,column=8)
+        ttk.Button(plo1,text='Plot',command=lambda:plotting.simple_plot(plo1,set_mol.get(),species,x,val_x.get(),val_y.get() ,typep.get(),typep1.get(),typep2.get(),typep3.get(),int(self.scale.get()),'k.'),width=10).grid(row=1,column=0)
         
     def there_is_a_scale(self,evt):
         if evt=='Yes':
-            self.label_scale.grid(row=1,column=1)
+            self.label_scale.grid(row=0,column=7)
             self.scale.grid(row=1,column=0)
         else:
             self.label_scale.grid_forget()
@@ -826,9 +896,45 @@ class App:
                 jdump(partition_functions , outfile, encoding='utf-8')
         self.saving_var['Files'][1]['Partition functions'].set(z_name)
         
-    def create_population_diagrams(self):
-        pass
-                                
+    def hist_cut(self):
+        ioff()
+
+        plotting_w=Toplevel(master)
+        plotting_w.minsize(width=666, height=666)
+        pframe=VerticalScrolledFrame(plotting_w)
+        pframe.grid(row=0,column=0)
+        file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()        
+        if len(file_candidate)<1:
+            tkMessageBox.showerror(message="No Spectral line file chosen!")
+            return
+        if ".json" not in file_candidate:
+            x,molecules,species,cnames_dict=comp.save_to_json(self.saving_var,self.progress)
+        else:
+            with open(file_candidate, 'r') as outfile:
+                x=jload( outfile, encoding='utf-8')
+        y={}
+        for mol in x.keys():
+            for spec in x[mol].keys():
+                for key in x[mol][spec].keys():
+                    if key not in ['SpecPlot','NuPosS']:
+                        if key not in y.keys():
+                            y[key]=[]
+                        y[key]+=x[mol][spec][key]
+        i=0
+
+        for key in App.changeable_list:
+            if key in y.keys():
+                fig=figure()
+                ax=fig.add_subplot(111)            
+                ax.set_xlabel(App.tex_output_dict[key])
+                hist(y[key], 50, normed=1)
+                canvas = FigureCanvasTkAgg(fig, master=pframe.interior)
+                canvas.get_tk_widget().grid(row=i,column=0)
+                close(fig)
+                i+=1
+
+
+    
                 
 
 master = Tk()
