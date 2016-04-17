@@ -40,7 +40,7 @@ class VerticalScrolledFrame(Frame):
         Frame.__init__(self, parent, *args, **kw)            
 
         # create a canvas object and a vertical scrollbar for scrolling it
-        vscrollbar = Scrollbar(self, orient=VERTICAL)
+        vscrollbar = ttk.Scrollbar(self, orient=VERTICAL)
         vscrollbar.pack(fill=Y, side=RIGHT, expand=FALSE)
         canvas = Canvas(self, bd=0, highlightthickness=0,
                         yscrollcommand=vscrollbar.set)
@@ -256,6 +256,10 @@ class comp:
             for spec in species[mol]:
                 x[mol][spec]['NuPos']=[float(y) for y in x[mol][spec]['NuPosS']]
                 x[mol][spec]['SpecPlot']=comp.quantum_numbers(spec,mol,cnames_dict)
+                x[mol][spec]['Relative error A']=[x[mol][spec]['AreaE'][i]/x[mol][spec]['Area'][i] for i in range(len(x[mol][spec]['Area']))]
+                x[mol][spec]['Relative error W']=[x[mol][spec]['WidE'][i]/x[mol][spec]['Wid'][i] for i in range(len(x[mol][spec]['Wid']))]
+                x[mol][spec]['Sigma']=[x[mol][spec]['Tpeak'][i]/x[mol][spec]['Noise'][i] for i in range(len(x[mol][spec]['Wid']))]
+                x[mol][spec]['Doppler V'],x[mol][spec]['Doppler VE']=comp.doppler_velocity(x[mol][spec]['NuPos'],x[mol][spec]['NuPosE'],x[mol][spec]['NuTrans'],x[mol][spec]['NuTransE'])
         fc=file_candidate.split('.')
         fc=fc[0]+'.json'
         with open(fc, 'w') as outfile:
@@ -470,8 +474,8 @@ class App:
     tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
     'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
     'F0':'$\\nu_0\,\mathrm{MHz}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$','Sigma':'$\sigma$'}
-    changeable_list=[ u'Noise', u'Relative error W', u'Area', u'Tpeak',  u'Wid', u'Eu', u'Doppler V', u'Sigma', u'Relative error A']    
-    files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Eu','Plotting names','Partition functions']
+    changeable_list=[ u'Noise', u'Relative error W', u'Relative error A',u'Eu', u'Doppler V', u'Sigma']    
+    files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Cut','Plotting names','Partition functions']
     source_list=['Source name','LSR','Min Frequency','Max Frequency','Column density of H2','Column density error'] 
     statistics_list=['Pearson limit','Max Eu','Error cut']
     molecular_specifier={"2-Propynal": 303,
@@ -534,6 +538,7 @@ class App:
         self.analysis_menu.add_command(label="Histograms", command=self.hist_cut)
         self.analysis_menu.add_command(label="Apply criteria", command=self.clean)
         self.analysis_menu.add_command(label="Simple Plot", command=self.plotting_window)
+        self.analysis_menu.add_command(label="Modify removed", command=self.modify_removed)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
         self.menubar.add_cascade(label="Analysis", menu=self.analysis_menu)
         master.config(menu=self.menubar)
@@ -641,10 +646,13 @@ class App:
             removed_list=[line.strip() for line in removed_file]
         else:
             removed_list=[]
-            
+        if len(self.saving_var['Files'][1]['Special Cut'].get())>0:
+            with open(self.saving_var['Files'][1]['Special Cut'].get(),'r') as out:
+                Special_list=jload(out,encoding='utf-8')
+        else:
+            Special_list={}
         self.ErrorCut=self.check_cut_files(self.saving_var['Statistics'][1]['Error cut'].get(),100.)
         self.MaxEu=self.check_cut_files(self.saving_var['Statistics'][1]['Max Eu'].get(),1000.)
-        self.special_Eu={}
         file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()
         self.progress["value"] +=100
         
@@ -659,6 +667,7 @@ class App:
                 x=jload( outfile, encoding='utf-8')
             with open('cnames.json','r') as outfile:
                 cnames_dict=jload(outfile, encoding='utf-8')
+        cnames_inv={v:key for key,val in cnames_dict.items() for v in val}
         self.progress["value"] +=100
         
         partfun=self.saving_var['Files'][1]['Partition functions'].get()
@@ -681,15 +690,16 @@ class App:
         
         for mol in molecules:
             for spec in species[mol]:
-                x[mol][spec]['Relative error A']=[x[mol][spec]['AreaE'][i]/x[mol][spec]['Area'][i] for i in range(len(x[mol][spec]['Area']))]
-                x[mol][spec]['Relative error W']=[x[mol][spec]['WidE'][i]/x[mol][spec]['Wid'][i] for i in range(len(x[mol][spec]['Wid']))]
-                x[mol][spec]['Sigma']=[x[mol][spec]['Tpeak'][i]/x[mol][spec]['Noise'][i] for i in range(len(x[mol][spec]['Wid']))]
-                x[mol][spec]['Doppler V'],x[mol][spec]['Doppler VE']=comp.doppler_velocity(x[mol][spec]['NuPos'],x[mol][spec]['NuPosE'],x[mol][spec]['NuTrans'],x[mol][spec]['NuTransE'])
+                
                 x[mol][spec]['Nu/gu'], x[mol][spec]['Nu/guE']=comp.Nu_gu(x[mol][spec],mol,spec)      
-                if mol not in self.special_Eu.keys():
-                    remove=comp.cutting_list(self.MaxEu,x[mol][spec]['Eu'])
-                else:
-                    remove=comp.cutting_list(self.special_Eu[mol],x[mol][spec]['Eu'])
+                remove=comp.cutting_list(self.MaxEu,x[mol][spec]['Eu'])
+                for mol_s in Special_list.keys():
+                        if mol_s==mol or (mol_s=='All' and (mol not in Special_list.keys())):
+                            for mol_s1 in Special_list[mol_s].keys():
+                                if Special_list[mol_s][mol_s1]['max']!='':
+                                    remove+=comp.cutting_list(float(Special_list[mol_s][mol_s1]['max']),x[mol][spec][mol_s1])
+                                if Special_list[mol_s][mol_s1]['min']!='':
+                                    remove+=comp.cutting_list((-1)*float(Special_list[mol_s][mol_s1]['min']),[(-1.)*z for z in x[mol][spec][mol_s1]])
                 remove+=comp.cutting_list(self.ErrorCut,x[mol][spec]['Relative error A'])
                 remove+=comp.cutting_list(self.ErrorCut,x[mol][spec]['Relative error W'])
                 remove+=comp.cutting_list(-3.,[(-1.)*z for z in x[mol][spec]['Sigma']])
@@ -721,7 +731,7 @@ class App:
                 x[mol][spec]=comp.delete_dict_list(x[mol][spec],remove)
         
         for mol in molecules:
-                if len([x[mol][spec]['Area'][i] for spec in species[mol] for i in range(len(x[mol][spec]['Area'])) ])<3:
+                if len(set([x[mol][spec]['NuPosS'][i] for spec in species[mol] for i in range(len(x[mol][spec]['NuPosS'])) ]))<2:
                     del x[mol]
         molecules=[mol for mol in molecules if mol in x.keys()]
         species={key:val for key,val in species.items() if key in molecules}
@@ -730,7 +740,7 @@ class App:
        
         plotting_mol={}
         for mol in molecules:
-            plotting_mol[mol]=mol.strip().replace(' ','\,').replace('13C',r'^{13}C').replace('H2','H_{2}').replace('H3','H_{3}').replace('H4','H_{4}').replace('C2','C_{2}').replace(')2',')_{2}')
+            plotting_mol[mol]=mol.strip().replace(' ','\,').replace('13C',r'^{13}C').replace('H2','H_{2}').replace('H3','H_{3}').replace('H4','H_{4}').replace('C2','C_{2}').replace(')2',')_{2}').replace('C3','C_{3}').replace('C4','C_{4}')
         plot_names_fc=self.saving_var['Files'][1]['Plotting names'].get()
         if len(plot_names_fc)==0:
             plot_names_fc='plotting_names.json'
@@ -752,7 +762,7 @@ class App:
             fig=figure()
             ax=fig.add_subplot(111)
             plotting.saving_plot(self,Eu, Nu, NuE,y[self.mol],plotting_mol[self.mol],ax,'',0.9,fmt='k.',ecolor='black')
-            fig.savefig(str('mols/'+self.mol+'.png'))
+            fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'.png'))
             close(fig)
         with open('rotdiag.json', 'w') as outfile:
 		jdump( y, outfile, encoding='utf-8')
@@ -789,16 +799,13 @@ class App:
             except (RuntimeError,TypeError):
                 pass
           if i>0:
-              fig.savefig(str('mols/'+self.mol+'_color.png'))
+              fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'_color.png'))
           close(fig)
         
         self.progress["value"] +=100
         ion()
        
         self.progress["value"] +=100
-        for mol in molecules:
-            for spec in species[mol]:
-                print mol, len(x[mol][spec]['Area'])
     def plotting_window(self):
 
         x,molecules,species,column_names=comp.read_json(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())
@@ -898,11 +905,10 @@ class App:
         
     def hist_cut(self):
         ioff()
-
         plotting_w=Toplevel(master)
         plotting_w.minsize(width=666, height=666)
-        pframe=VerticalScrolledFrame(plotting_w)
-        pframe.grid(row=0,column=0)
+        plotting_w_o=Frame(plotting_w)
+        plotting_w_o.grid(row=0,column=0)
         file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()        
         if len(file_candidate)<1:
             tkMessageBox.showerror(message="No Spectral line file chosen!")
@@ -910,10 +916,33 @@ class App:
         if ".json" not in file_candidate:
             x,molecules,species,cnames_dict=comp.save_to_json(self.saving_var,self.progress)
         else:
-            with open(file_candidate, 'r') as outfile:
-                x=jload( outfile, encoding='utf-8')
+            x,molecules,species,column_names=comp.read_json(file_candidate)
+        
+        mol0=['All']
+        mol0+=sorted(molecules)
+        self.Removing_list={key:{key1:{'min':StringVar(),'max':StringVar()} for key1 in App.changeable_list} for key in mol0}
+        column_names=sorted(column_names)
+        set_mol=StringVar()
+        opt_mol=ttk.OptionMenu(plotting_w_o, set_mol, 'Select Molecule', *mol0 )
+        opt_mol.grid(row=0,column=0)
+        ttk.Button(plotting_w_o,text='Go',command=lambda:self.hist_cut_1(x,molecules,set_mol.get(),plotting_w)).grid(row=0,column=1)
+        ttk.Button(plotting_w_o,text='Save',command=lambda:self.save_removal(self.Removing_list)).grid(row=0,column=2)
+    def save_removal(self,x):
+        y={key:{key1:{key2:x[key][key1][key2].get() for key2 in x[key][key1].keys() } for key1 in x[key].keys()} for key in x.keys()}
+        tf = tkFileDialog.asksaveasfilename(defaultextension =".json")
+        tf1=tf.split('.')
+        if tf1[1]!='json':
+            tf=tf+'.json'
+        with open(tf,'w') as f:
+            jdump(y,f,encoding='utf-8')
+            self.saving_var['Files'][1]['Special Cut'].set(tf)
+    def hist_cut_1(self,x,molecules,sm,plotting_w):
+        pframe=VerticalScrolledFrame(plotting_w)
+        pframe.grid(row=1,column=0)
         y={}
-        for mol in x.keys():
+        if sm!='All':
+            molecules=[sm]
+        for mol in molecules:
             for spec in x[mol].keys():
                 for key in x[mol][spec].keys():
                     if key not in ['SpecPlot','NuPosS']:
@@ -930,11 +959,77 @@ class App:
                 hist(y[key], 50, normed=1)
                 canvas = FigureCanvasTkAgg(fig, master=pframe.interior)
                 canvas.get_tk_widget().grid(row=i,column=0)
+                frame=Frame(pframe.interior)
+                frame.grid(row=i+1,column=0)
+                j=0
+                for key1 in self.Removing_list[sm][key].keys():
+                    Label(frame,text=key1).grid(row=0,column=j)
+                    Entry(frame,textvariable=self.Removing_list[sm][key][key1]).grid(row=0,column=j+1)
+                    j+=2
                 close(fig)
-                i+=1
+                i+=2
+            self.is_open=sm
+    def modify_removed(self):
+            frame=Toplevel(master)
+            file_candidate=self.saving_var['Files'][1]['Spectral lines'].get()
+        
+            if len(file_candidate)<1:
+                tkMessageBox.showerror(message="No Spectral line file chosen!")
+                return
+            if ".json" not in file_candidate:
+                x,molecules,species,cnames_dict=comp.save_to_json(self.saving_var,self.progress)
+                progress["value"]=100
+            else:
+                with open(file_candidate, 'r') as outfile:
+                    x=jload( outfile, encoding='utf-8')
+                with open('cnames.json','r') as outfile:
+                    cnames_dict=jload(outfile, encoding='utf-8')
+            if len(self.saving_var['Files'][1]['Removed'].get())>0:
+                removed_file=open(self.saving_var['Files'][1]['Removed'].get(),'r')
+                removed_list=[line.strip() for line in removed_file]
+                removed_file.close()
+            else:
+                removed_list=[]
+            all_names=[y for y in x.keys() if y not in removed_list] 
+            def sendto(sel,froms,tos,mod):
+                tos+=[froms[i] for i in sel]
+                froms=[y for y in froms if y not in tos]
 
-
-    
+                self.lbox1.delete(0, END)
+                self.lbox2.delete(0, END)
+                if mod=='r':
+                    for i in froms:
+                        self.lbox1.insert(END, i)
+                    
+                    for i in tos:
+                        self.lbox2.insert(END, i)
+                else:
+                    for i in froms:
+                        self.lbox2.insert(END, i)
+                    
+                    for i in tos:
+                        self.lbox1.insert(END, i)
+                self.lbox1.selection_clear(0,END)
+                self.lbox2.selection_clear(0,END)
+            def saveto(removed_list,frame):
+                with open(self.saving_var['Files'][1]['Removed'].get(),'w') as outfile:
+                    out=''
+                    for x in removed_list:
+                        out+=x+'\n'
+                    outfile.write(out)
+                frame.destroy()
+            self.lbox1 = Listbox(frame,selectmode=MULTIPLE, height=15)
+            self.lbox2 = Listbox(frame, selectmode=MULTIPLE, height=15)
+            frame1=Frame(frame)
+            frame1.grid(row=0,column=1)
+            ttk.Button(frame1,text='>>',command=lambda :sendto(self.lbox1.curselection(),all_names,removed_list,'r')).grid(row=0,column=0)
+            ttk.Button(frame1,text='Save',command=lambda :saveto(removed_list,frame)).grid(row=1,column=0)
+            self.lbox1.grid(row=0,column=0)
+            self.lbox2.grid(row=0,column=2)
+            for i in all_names:
+                    self.lbox1.insert(END, i)
+            for i in removed_list:
+                    self.lbox2.insert(END, i)
                 
 
 master = Tk()
