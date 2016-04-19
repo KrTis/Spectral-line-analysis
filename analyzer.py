@@ -19,7 +19,7 @@ from math import *
 from operator import itemgetter, attrgetter, methodcaller
 from matplotlib.colors import LogNorm
 import numpy as np
-from matplotlib.pyplot import figure, plot,show, contour, hist2d,hist,colorbar,savefig,errorbar,close,ioff,ion
+from matplotlib.pyplot import figure, plot,show, contour, hist2d,hist,colorbar,savefig,errorbar,close,ioff,ion,getp
 from collections import OrderedDict
 from scipy import constants
 from json import dump as jdump
@@ -75,8 +75,10 @@ class VerticalScrolledFrame(Frame):
         canvas.bind('<Configure>', _configure_canvas)
         
 class plotting(object):
+    ''' Plotting tools'''
     @classmethod
     def simple_plot(self,plo1,mol,species,xx,A,B,opts,opts1,opts2,opts3,scale,args):
+        ### Simple plotting with contours and histograms
         ioff()
         if mol!='All':
             x,y=comp.combine_species(mol, species[mol],xx,A,B)
@@ -91,7 +93,7 @@ class plotting(object):
         with open('rotdiag.json','r') as outfile:
            rot=jload(outfile,encoding='utf-8')
 
-        fig=figure()
+        fig=figure(facecolor="1.")
         ax=fig.add_subplot(111)
         if opts3[0]=='Y':
             ax.plot(x,y,args)
@@ -132,46 +134,64 @@ class plotting(object):
         close(fig)
         #ion()
     @classmethod
-    def saving_plot(self,pclass,Eu, Nu, NuE,ymol,pmol,ax,label,ypos,**kwargs):
+    def saving_plot(self,pclass,x,ymol,pmol,ax,ax_tau,label,ypos,tauarg,**kwargs):
+            ### Plotting of rotational/population diagrams
             ax.set_xlim(0,450.)
             lims=ax.get_ylim()
-            if lims[0]>.9*min(Nu) or lims[0]<15.:
-                 ax.set_ylim(bottom=.9*min(Nu))
-            if lims[1]<1.1*max(Nu):
-                ax.set_ylim(top=1.1*max(Nu))
-            ax.set_title("$ "+pmol+"$")
+            if lims[0]>.9*min(x['Nu/gu']) or lims[0]<15.:
+                 ax.set_ylim(bottom=.9*min(x['Nu/gu']))
+            if lims[1]<1.1*max(x['Nu/gu']):
+                ax.set_ylim(top=1.1*max(x['Nu/gu']))
             ax.set_xlabel(App.tex_output_dict['Eu'])
-            ax.set_ylabel(App.tex_output_dict['Nu/gu'])
+            
             
             
             if ymol['Rot'][0]>0 and ymol['Rot'][0]<500. :
                 if pclass.mol in pclass.z_file.keys():
                     ymol['Z'],ymol['ZStdev']=comp.get_z(ymol['Rot'][0],ymol['RotSigmas'][0],pclass.z_file[pclass.mol]['Fit'],pclass.z_file[pclass.mol]['Stdev'])
                     ymol['N'], ymol['Nerr']=comp.column_density(ymol['Z'],ymol['ZStdev'],ymol['Rot'][1],ymol['RotSigmas'][1])
-            
+                    
                     if  ymol['N']!=float("inf") and ymol['Nerr']!=float("inf"):
                         text_plot=label+" ${:.2uL}$ K".format(ufloat(ymol['Rot'][0],ymol['RotSigmas'][0]))
-    
-                        ax.errorbar(Eu,Nu,yerr=NuE,**kwargs)
+                        
                         x_line=np.linspace(0, 450, 100)
-                        y_line=[comp.rot(x1,ymol['Rot'][0],ymol['Rot'][1]) for x1 in x_line]
-                        ax.plot(x_line,y_line,label=label)
+                        y_line=[comp.rotp(x1,ymol['Rot'][0],ymol['Rot'][1]) for x1 in x_line]
+                        
                         
                         text_plot+="\n${:.2uL}$".format(ufloat(ymol['N'],ymol['Nerr']))+r"$\,\mathrm{cm^{-2}}$"
-    
-                        ax.text(.65,ypos,text_plot,transform = ax.transAxes)
+                        line,=ax.plot(x_line,y_line,label=text_plot,**kwargs)
+                        col=getp(line,'color')
+                        if tauarg:
+                            ax.set_ylabel(App.tex_output_dict['Nu/gu']+r' $-\ln C_{\tau}$')
+                            ax.errorbar(x['Eu'],x['Nu/gu']-comp.lnCt({key:np.asarray(x[key]) for key in x.keys()},ymol['Rot'][0],ymol['Rot'][1]),yerr=x['Nu/guE'],fmt='.',color=col)
+                         
+                            
+                            ax_tau.hist(comp.tau({key:np.asarray(x[key]) for key in x.keys()},ymol['Rot'][0],ymol['Rot'][1]), 10, normed=False,alpha=0.5,label=label)
+                        else:
+                            ax.set_ylabel(App.tex_output_dict['Nu/gu'])
+                            ax.errorbar(x['Eu'],x['Nu/gu'],yerr=x['Nu/guE'],fmt='.',color=col)
+                            col=getp(line,'color')
+                        #ax.text(.65,ypos,text_plot,transform = ax.transAxes)
                         return True
+            '''
                     else:
-                        ax.errorbar(Eu,Nu,yerr=NuE,fmt='k.',ecolor='black')
+                        if tauarg:
+                                ax.errorbar(x['Eu'],x['Nu/gu']-comp.lnCt({key:np.asarray(x[key]) for key in x.keys()},ymol['Rot'][0],ymol['Rot'][1]),yerr=x['Nu/guE'],fmt='k.',ecolor='black')
+                        else:
+                                ax.errorbar(x['Eu'],x['Nu/gu'],yerr=x['Nu/guE'],fmt='k.',ecolor='black')
                 else:
-                    ax.errorbar(Eu,Nu,yerr=NuE,fmt='k.',ecolor='black')
+                    ax.errorbar(x['Eu'],x['Nu/gu'],yerr=x['Nu/guE'],fmt='k.',ecolor='black')
             else:
-                ax.errorbar(Eu,Nu,yerr=NuE,fmt='k.',ecolor='black')
+                ax.errorbar(x['Eu'],x['Nu/gu'],yerr=x['Nu/guE'],fmt='k.',ecolor='black')
+            '''
             
 
 class comp:
+    ''' Functions used in App and plotting'''
+    tauconst=pow(10.,0.-14.)/(8*3.14)
     @classmethod
     def len1(self,x):
+        ### extension of the len() function
         try:
             len(x)
             return len(x)
@@ -179,6 +199,7 @@ class comp:
             return 1
     @classmethod
     def cutting_list(self,limit,data):
+        ### A function that cuts the list based on a criterion limit
         length=len(data)
         remove=[]
         for i in range(length):
@@ -187,6 +208,7 @@ class comp:
         return remove
     @classmethod
     def finding_in_list(self,data,what):
+        ### Returns a list of indices that satisfy a criterion
         length=len(data)
         remove=[]
         for i in range(length):
@@ -195,16 +217,20 @@ class comp:
         return remove
     @classmethod
     def delete_list(self,input_list,remove_list):
+        ### Delete a list of indices from a list
         return [input_list[i] for i in range(len(input_list)) if i not in remove_list]
     @classmethod
     def delete_dict_list(self, input_dict,remove_list):
+        ### Apply delete_list on a dictionary
         return {key:self.delete_list(input_dict[key],remove_list) for key in input_dict.keys()}
     @classmethod
     def doppler_velocity(self,measured,errmeas,database,errdb):
+        ### Calculate the Doppler velocity of a line
         return [[0.001*constants.c*(database[i]-float(measured[i]))/database[i] for i in range(len(measured))],
                  [sqrt((errdb[i]/database[i])**2+(errmeas[i]/float(measured[i]))**2)*0.001*constants.c*(database[i]-float(measured[i]))/database[i] for i in range(len(measured))]]
     @classmethod
     def save_to_json(self, saving_var, progress):
+        ### Convert spectral line data to json
         # Reading the spectral lines input file
         progress["value"]=0
         progress["maximum"]=500
@@ -380,27 +406,42 @@ class comp:
             fz=comp.z_fit(T,pars[0],pars[1])
             return fz, fz*np.sqrt((M_pars[0]/pars[0])**2+(T*M_pars[1])**2+((1.5/T+pars[1])*M_T)**2)
     @classmethod
-    def fit_population(self,Eu,Nu,NuE):
-        Eu=np.asarray(Eu)
-        Nu=np.asarray(Nu)
-        NuE=np.asarray(NuE)
-        params,covar=curve_fit(comp.rot, Eu,Nu,[100, 20.],sigma=NuE)
+    def fit_population(self,z,tauarg):
+        z1={key:np.asarray(z[key]) for key in z.keys()}
+        if tauarg:
+            params,covar=curve_fit(comp.rot, z1,z1['Nu/gu'],[100, 20.],sigma=z1['Nu/guE'])
+        else:
+            params,covar=curve_fit(comp.rotnc, z1,z1['Nu/gu'],[100, 20.],sigma=z1['Nu/guE'])
+
         sigmas=np.sqrt(np.diag(covar))
         return params.tolist(), covar.tolist(), sigmas.tolist()
+    @classmethod 
+    def tau(self,x,a,b):
+        return comp.tauconst*np.power(10.,x['Aij'])*np.power(constants.c,2.)*x['gu']*np.exp(b)/(np.power(x['NuTrans'],2.)*x['Wid'])*(1-np.exp(-x['Eu']/a))
     @classmethod
-    def fit_rotational(self, species, x):
-        Eu=[]
-        Nu=[]
-        NuE=[]
+    def lnCt(self,x,a,b):
+        return np.log((1-np.exp(-comp.tau(x,a,b)))/comp.tau(x,a,b))
+    @classmethod
+    def fit_rotational(self, species, x,tauarg):
+        a=1
         for spec in species:
-                Eu+=x[spec]['Eu']
-                Nu+=x[spec]['Nu/gu']
-                NuE+=x[spec]['Nu/guE']
-        a, b, c=comp.fit_population(Eu, Nu, NuE)
-        return Eu, Nu, NuE, a, b,c
+            if a==1:
+                z={key:[] for key in x[spec].keys()}  
+                a+=1
+        for spec in species:
+            for key in x[spec].keys():
+                z[key]+=x[spec][key]
+        a, b, c=comp.fit_population(z,tauarg)
+        return z, a, b,c
     @classmethod        
-    def rot(self,Eu,a,b):
-            return -Eu/a+b
+    def rot(self,x,a,b):
+            return -x['Eu']/a+b+comp.lnCt(x,a,b)
+    @classmethod        
+    def rotnc(self,x,a,b):
+            return -x['Eu']/a+b
+    @classmethod        
+    def rotp(self,x,a,b):
+            return -x/a+b
     @classmethod
     def column_density(self,Z, Zerr, NZ, NZerr):
         N=Z*np.exp(NZ)
@@ -470,11 +511,14 @@ class App:
     The main program
     '''
     size=25
+    legend_size=None
+    imresx=1.5*8
+    imresy=1.5*6
     input_dict={0:'Area',1:'AreaE',2:'NuPosS',3:'NuPosE',4:'Wid',5:'WidE',6:'Tpeak',7:'Noise',8:'NuTrans',9:'NuTransE',12:'Aij',13:'Eu',14:'gu',17:'F0'}
     tex_output_dict={'Area':'$A$','AreaE':'$M_A$','NuPos':'$\\nu\,[\mathrm{MHz}]$','NuPosE':'$M_{\\nu}\,[\mathrm{MHz}]$','Wid':'$W$','WidE':'$M_W$','Tpeak':'$T_{\mathrm{peak}}\,[\mathrm{K}]$',
     'Noise':'$\sigma_{\mathrm{RMS}}$','NuTrans':'$\\nu_{ul}\,[\mathrm{MHz}]$','NuTransE':'$M_{\\nu_{ul}}\,[\mathrm{MHz}]$','Aij':'$A_{ul}$','Eu':'$E_u\,[\mathrm{K}]$','gu':'$g_u$',
     'F0':'$\\nu_0\,\mathrm{MHz}$','Nu/gu':'$\ln(N_u/g_u)$','Nu/guE':'$M_{\ln(N_u/g_u)}$','Relative error A':'$M_A/A$','Relative error W':'$M_W/W$','Doppler V':'$v\,[\mathrm{km/s}]$','Doppler VE':'$M_v\,[\mathrm{km/s}]$','Sigma':'$\sigma$'}
-    changeable_list=[ u'Noise', u'Relative error W', u'Relative error A',u'Eu', u'Doppler V', u'Sigma']    
+    changeable_list=[ u'Eu', u'Doppler V', u'Sigma', u'Relative error W', u'Relative error A']    
     files_list=['Spectral lines','Cleaned Spectral lines','Spectrum','Removed','Special Cut','Plotting names','Partition functions']
     source_list=['Source name','LSR','Min Frequency','Max Frequency','Column density of H2','Column density error'] 
     statistics_list=['Pearson limit','Max Eu','Error cut']
@@ -519,18 +563,25 @@ class App:
 
     def __init__(self,master):
         ### Dictionary containing data on all frames in the main window
+        try_input={}
+        try:
+            with open('files.json','r') as infile:
+                try_input=jload( infile, encoding='utf-8')
+        except (IOError,ValueError):
+                pass
         self.saving_var={'Files':[StringVar(),
                              OrderedDict([ (x,StringVar()) for x in App.files_list])],
                     'Source':[StringVar(),
                               OrderedDict([(x,StringVar()) for x in App.source_list])],
                     'Statistics':[StringVar(),
                                   OrderedDict([(x,StringVar()) for x in App.statistics_list])]}
-        
+        for keys in try_input.keys():
+            for keys1 in try_input[keys].keys():
+                self.saving_var[keys][1][keys1].set(try_input[keys][keys1])
         #### Menu
         self.menubar=Menu(master)
         self.file_menu=Menu(self.menubar,tearoff=0)
         self.analysis_menu=Menu(self.menubar,tearoff=0)
-        self.file_menu.add_command(label="Hello!",command=self.open_file)
         self.file_menu.add_command(label="Save properties", command=lambda:self.save_window(self.saving_var))
         self.file_menu.add_command(label="Open properties", command=lambda:self.open_window(self.saving_var))
         self.analysis_menu.add_command(label="Save to JSON", command=lambda:comp.save_to_json(self.saving_var,self.progress))
@@ -560,9 +611,8 @@ class App:
         self.progress = ttk.Progressbar(master, orient="horizontal",length=870, style="TProgressbar", mode="determinate")
         self.progress["value"] = 0
         self.progress.grid(row=1,column=0)
-    def open_file(self):
-        # empty function
-        print 'x'
+        
+
         
     def input_entry(self,frame_name,entry_title,entry_variable,position,width,**kwargs):
         # function for creating lists of entry widgets
@@ -584,12 +634,19 @@ class App:
         
     def save_entries(self,wind,save_var):
         # saving function
+        try_input={}
         for i in save_var.keys():
-            if len(save_var[i][0].get())>0:
+            try_input[i]={}
+            if len(save_var[i][0].get())>0:     
                 f=open(save_var[i][0].get(),'w')
                 for j in save_var[i][1].keys():
                     f.write(str(j+':'+save_var[i][1][j].get()+'\n'))
                 f.close()
+            for j in save_var[i][1].keys():
+                try_input[i][j]=save_var[i][1][j].get()
+        with open('files.json','w') as infile:
+            jdump(try_input, infile, encoding='utf-8')
+            infile.close()
         wind.destroy()
                 
     def open_window(self,saving_var):
@@ -608,8 +665,10 @@ class App:
         
     def open_entries(self,wind,save_var):
         # opening function
+        try_input={}
         self.progress["value"] = 0
         for i in save_var.keys():
+            
             if len(save_var[i][0].get())>0:
                 f=open(save_var[i][0].get(),'r')
                 for line in f:
@@ -618,6 +677,14 @@ class App:
                         if line1[0]==j:
                             save_var[i][1][j].set(line1[1].strip())
                 f.close()
+        for i in save_var.keys():
+            try_input[i]={}
+            for j in save_var[i][1].keys():
+                try_input[i][j]=save_var[i][1][j].get()
+                
+        with open('files.json','w') as infile:
+            jdump(try_input, infile, encoding='utf-8')
+            infile.close()
         wind.destroy()
         
     def file_name(self,par,saving_var,k):
@@ -661,7 +728,6 @@ class App:
             return
         if ".json" not in file_candidate:
             x,molecules,species,cnames_dict=comp.save_to_json(self.saving_var,self.progress)
-            progress["value"]=100
         else:
             with open(file_candidate, 'r') as outfile:
                 x=jload( outfile, encoding='utf-8')
@@ -740,7 +806,7 @@ class App:
        
         plotting_mol={}
         for mol in molecules:
-            plotting_mol[mol]=mol.strip().replace(' ','\,').replace('13C',r'^{13}C').replace('H2','H_{2}').replace('H3','H_{3}').replace('H4','H_{4}').replace('C2','C_{2}').replace(')2',')_{2}').replace('C3','C_{3}').replace('C4','C_{4}')
+            plotting_mol[mol]=mol.strip().replace(' ','\,').replace('13C',r'^{13}C').replace('H2','H_{2}').replace('H3','H_{3}').replace('H4','H_{4}').replace('C2','C_{2}').replace(')2',')_{2}').replace('C3','C_{3}').replace('C4','C_{4}').replace('O2','O_{2}')
         plot_names_fc=self.saving_var['Files'][1]['Plotting names'].get()
         if len(plot_names_fc)==0:
             plot_names_fc='plotting_names.json'
@@ -758,12 +824,35 @@ class App:
 		jdump( x, outfile, encoding='utf-8')
         y={mol:{} for mol in molecules}
         for self.mol in molecules:
-            Eu, Nu, NuE, y[self.mol]['Rot'],y[self.mol]['RotCovar'],y[self.mol]['RotSigmas']=comp.fit_rotational( species[self.mol],x[self.mol])
-            fig=figure()
-            ax=fig.add_subplot(111)
-            plotting.saving_plot(self,Eu, Nu, NuE,y[self.mol],plotting_mol[self.mol],ax,'',0.9,fmt='k.',ecolor='black')
-            fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'.png'))
-            close(fig)
+            try:
+                z, y[self.mol]['Rot'],y[self.mol]['RotCovar'],y[self.mol]['RotSigmas']=comp.fit_rotational( species[self.mol],x[self.mol],True)
+                fig=figure(figsize=(App.imresx, App.imresy))
+                ax=fig.add_subplot(111)
+                fig_tau=figure(figsize=(App.imresx, App.imresy))
+                ax_tau=fig_tau.add_subplot(111)
+                plotting.saving_plot(self,z,y[self.mol],plotting_mol[self.mol],ax,ax_tau,'',0.9,True,color='k')
+                ax.set_title(cnames_inv[self.mol]+'\n $'+plotting_mol[self.mol]+"$ ")
+                ax.legend(loc='upper right',prop={'size':App.legend_size})
+                fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'.png'))
+                close(fig)
+                ax_tau.set_xlabel(r'$\tau$')
+                ax_tau.set_title(cnames_inv[self.mol]+'\n $'+plotting_mol[self.mol]+"$ ")
+                ax_tau.legend(loc='upper right',prop={'size':App.legend_size})
+                
+                fig_tau.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'-tau.png'))
+                close(fig_tau)
+            except RuntimeError:
+                try:
+                    z, y[self.mol]['Rot'],y[self.mol]['RotCovar'],y[self.mol]['RotSigmas']=comp.fit_rotational( species[self.mol],x[self.mol],False)
+                    fig=figure(figsize=(App.imresx, App.imresy))
+                    ax=fig.add_subplot(111)
+                    plotting.saving_plot(self,z,y[self.mol],plotting_mol[self.mol],ax,None,'',0.9,False,color='k')
+                    ax.set_title(cnames_inv[self.mol]+'\n $'+plotting_mol[self.mol]+"$ ")
+                    ax.legend(loc='upper right',prop={'size':App.legend_size})
+                    fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'.png'))
+                    close(fig)
+                except RuntimeError:
+                    pass
         with open('rotdiag.json', 'w') as outfile:
 		jdump( y, outfile, encoding='utf-8')
         y_list={}
@@ -771,35 +860,46 @@ class App:
         for mol in molecules:
             y_list[mol]={}
             for spec in species[mol]:
-                y_list[mol][x[mol][spec]['SpecPlot'][2]]=[]
+                try:
+                    y_list[mol][x[mol][spec]['SpecPlot'][2]]=[]
+                except IndexError:
+                    pass
         for mol in molecules:
             for spec in species[mol]:
-                y_list[mol][x[mol][spec]['SpecPlot'][2]].append(spec)
+                try:
+                    y_list[mol][x[mol][spec]['SpecPlot'][2]].append(spec)
+                except IndexError:
+                    pass
         for self.mol in molecules:
           y={}
-          fig=figure()
+          fig=figure(figsize=(App.imresx, App.imresy))
           ax=fig.add_subplot(111)
+          fig_tau=figure(figsize=(App.imresx, App.imresy))
+          ax_tau=fig_tau.add_subplot(111)
           i=0
           for spec in y_list[self.mol].keys():
-            Eu=[]
-            Nu=[]
-            NuE=[]
-            for spec1 in y_list[self.mol][spec]:
-                Eu+=x[self.mol][spec1]['Eu']
-                Nu+=x[self.mol][spec1]['Nu/gu']
-                NuE+=x[self.mol][spec1]['Nu/guE']
             try:
-                y['Rot'],y['RotCovar'],y['RotSigmas']=comp.fit_population(Eu, Nu, NuE)
-                Eu, Nu, NuE, y['Rot'],y['RotCovar'],y['RotSigmas']=comp.fit_rotational( y_list[self.mol][spec],x[self.mol])
-                
-                incr=plotting.saving_plot(self,Eu, Nu, NuE,y,plotting_mol[self.mol],ax,spec,0.9-0.1*i,fmt='.')
+                z, y['Rot'],y['RotCovar'],y['RotSigmas']=comp.fit_rotational( y_list[self.mol][spec],x[self.mol],True)
+                incr=plotting.saving_plot(self,z,y,plotting_mol[self.mol],ax,ax_tau,spec,0.9-0.1*i,True)
                 if incr:                
                     i+=1
-                
             except (RuntimeError,TypeError):
-                pass
+                try:
+                    z, y['Rot'],y['RotCovar'],y['RotSigmas']=comp.fit_rotational( y_list[self.mol][spec],x[self.mol],False)
+                    incr=plotting.saving_plot(self,z,y,plotting_mol[self.mol],ax,fig_tau,spec,0.9-0.1*i,False)
+                    if incr:                
+                        i+=1
+                except (RuntimeError,TypeError):
+                    pass
           if i>0:
+              ax.set_title(cnames_inv[self.mol]+'\n $'+plotting_mol[self.mol]+"$ ")
+              ax.legend(loc='upper right',prop={'size':App.legend_size})
               fig.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'_color.png'))
+              ax_tau.set_xlabel(r'$\tau$')
+              ax_tau.legend(loc='upper right',prop={'size':App.legend_size})
+              ax_tau.set_title(cnames_inv[self.mol]+'\n $'+plotting_mol[self.mol]+"$ ")
+              fig_tau.savefig(str('mols/'+cnames_inv[self.mol]+'_'+self.mol+'-tau_color.png'))
+          close(fig_tau)
           close(fig)
         
         self.progress["value"] +=100
@@ -917,10 +1017,31 @@ class App:
             x,molecules,species,cnames_dict=comp.save_to_json(self.saving_var,self.progress)
         else:
             x,molecules,species,column_names=comp.read_json(file_candidate)
+        removed=[]
+        clean=[]
+        if len(self.saving_var['Files'][1]['Removed'].get())>0:
+            
+            removed_file=open(self.saving_var['Files'][1]['Removed'].get(),'r')
+            for line in removed_file:
+                removed.append(line.strip())
+        if len(self.saving_var['Files'][1]['Cleaned Spectral lines'].get())>0:
+            
+            with open(self.saving_var['Files'][1]['Cleaned Spectral lines'].get(),'r') as infile:
+             zz1=jload( infile, encoding='utf-8')
+             clean=zz1.keys()
+        print removed
         
         mol0=['All']
-        mol0+=sorted(molecules)
+        mol0+=sorted([key for key in molecules  if ((key not in removed) and (key in clean))])
         self.Removing_list={key:{key1:{'min':StringVar(),'max':StringVar()} for key1 in App.changeable_list} for key in mol0}
+        if len(self.saving_var['Files'][1]['Special Cut'].get())>0:
+            with open(self.saving_var['Files'][1]['Special Cut'].get(),'r') as infile:
+                zz=jload( infile, encoding='utf-8')
+            for key in self.Removing_list.keys():
+                for key1 in self.Removing_list[key].keys():
+                        for key2 in self.Removing_list[key][key1].keys():
+                            self.Removing_list[key][key1][key2].set(zz[key][key1][key2])
+
         column_names=sorted(column_names)
         set_mol=StringVar()
         opt_mol=ttk.OptionMenu(plotting_w_o, set_mol, 'Select Molecule', *mol0 )
@@ -953,10 +1074,10 @@ class App:
 
         for key in App.changeable_list:
             if key in y.keys():
-                fig=figure()
+                fig=figure(facecolor="1.")
                 ax=fig.add_subplot(111)            
                 ax.set_xlabel(App.tex_output_dict[key])
-                hist(y[key], 50, normed=1)
+                hist(y[key], 20, normed=False)
                 canvas = FigureCanvasTkAgg(fig, master=pframe.interior)
                 canvas.get_tk_widget().grid(row=i,column=0)
                 frame=Frame(pframe.interior)
